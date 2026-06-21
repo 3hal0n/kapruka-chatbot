@@ -9,7 +9,7 @@ import asyncio
 import logging
 import httpx
 from typing import Dict, Any, Optional, List
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -77,21 +77,43 @@ class KaprukaMCPClient:
         try:
             logger.info(f"Connecting to Kapruka remote MCP server at {self.sse_url}...")
             
-            # 1. Initialize HTTP Client
-            self.http_client = RateLimitedAsyncClient(timeout=45.0)
-            await self._exit_stack.enter_async_context(self.http_client)
+            # Step 1: Query server to initialize a session and retrieve the session ID from response headers
+            async with httpx.AsyncClient(timeout=15.0) as temp_client:
+                logger.info("Performing handshake to retrieve session ID...")
+                resp = await temp_client.get(self.sse_url)
+                session_id = resp.headers.get("mcp-session-id")
+                if not session_id:
+                    raise RuntimeError("Server did not return an 'mcp-session-id' header.")
+                logger.info(f"Handshake successful. Session ID generated: {session_id}")
+
+            # Step 2: Custom client factory to inject RateLimitedAsyncClient and set headers
+            @asynccontextmanager
+            async def client_factory(headers=None, auth=None, timeout=None):
+                if headers is None:
+                    headers = {}
+                headers["mcp-session-id"] = session_id
+                
+                client = RateLimitedAsyncClient(headers=headers, auth=auth, timeout=timeout)
+                self.http_client = client
+                async with client:
+                    yield client
             
-            # 2. Bind SSE Client Transport
+            # Connect using sse_client with our custom factory and headers
+            connection_headers = {"mcp-session-id": session_id}
             read, write = await self._exit_stack.enter_async_context(
-                sse_client(url=self.sse_url, session=self.http_client)
+                sse_client(
+                    url=self.sse_url,
+                    headers=connection_headers,
+                    httpx_client_factory=client_factory
+                )
             )
             
-            # 3. Bind MCP Client Session
+            # Bind MCP Client Session
             self.mcp_session = await self._exit_stack.enter_async_context(
                 ClientSession(read, write)
             )
             
-            # 4. Initialize MCP Session
+            # Initialize MCP Session
             await self.mcp_session.initialize()
             logger.info("Kapruka MCP connection successfully initialized.")
             return self
@@ -169,7 +191,7 @@ async def with_rate_limit_backoff(func, *args, **kwargs):
                     wait_time = base_backoff * (2 ** attempt)
                     
                 logger.warning(
-                    f"Rate limit hit. Retrying in {wait_time:.2f} seconds (Attempt {attempt+1}/{max_attempts})..."
+                    f"Rate limit hit. Retrying in {wait_time:.2f} seconds (Attempt {attempt+1}/{max_attempts})...."
                 )
                 await asyncio.sleep(wait_time)
                 if client and client.http_client:
