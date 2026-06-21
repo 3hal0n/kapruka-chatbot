@@ -11,6 +11,7 @@ interface ShoppingContextCardProps {
   occasion: string;
   setOccasion: (o: string) => void;
   onContextUpdated?: (type: "budget" | "recipient" | "occasion", value: string) => void;
+  theme: "light" | "dark";
 }
 
 const BUDGETS = ["Under Rs. 2,500", "Rs. 2,500 - 5,000", "Rs. 5,000 - 10,000", "Above Rs. 10,000"];
@@ -25,6 +26,7 @@ export function ShoppingContextCard({
   occasion,
   setOccasion,
   onContextUpdated,
+  theme,
 }: ShoppingContextCardProps) {
 
   const handleSelect = (type: "budget" | "recipient" | "occasion", val: string) => {
@@ -54,18 +56,21 @@ export function ShoppingContextCard({
         items={BUDGETS} 
         value={budget} 
         onClick={(val) => handleSelect("budget", val)} 
+        theme={theme}
       />
       <ContextRow 
         title="Who is the recipient?" 
         items={RECIPIENTS} 
         value={recipient} 
         onClick={(val) => handleSelect("recipient", val)} 
+        theme={theme}
       />
       <ContextRow 
         title="What is the occasion?" 
         items={OCCASIONS} 
         value={occasion} 
         onClick={(val) => handleSelect("occasion", val)} 
+        theme={theme}
       />
     </motion.div>
   );
@@ -76,27 +81,43 @@ interface ContextRowProps {
   items: string[];
   value: string;
   onClick: (val: string) => void;
+  theme: "light" | "dark";
 }
 
-function ContextRow({ title, items, value, onClick }: ContextRowProps) {
+function ContextRow({ title, items, value, onClick, theme }: ContextRowProps) {
   return (
     <div className="mt-3">
       <p className="mb-2 text-sm font-bold text-foreground select-none">{title}</p>
       <div className="flex flex-wrap gap-2">
         {items.map((item) => {
           const active = value === item;
+          
+          let bgVal = "rgba(255, 255, 255, 0.03)";
+          let colorVal = "#C8B3E4";
+          let borderVal = "rgba(255, 255, 255, 0.1)";
+
+          if (theme === "light") {
+            bgVal = active ? "#441B71" : "#F9FAFB";
+            colorVal = active ? "#ffffff" : "#4B5563";
+            borderVal = active ? "#441B71" : "#D1D5DB";
+          } else {
+            bgVal = active ? "#FFD700" : "rgba(255, 255, 255, 0.03)";
+            colorVal = active ? "#0B0410" : "#C8B3E4";
+            borderVal = active ? "#FFD700" : "rgba(255, 255, 255, 0.1)";
+          }
+
           return (
             <motion.button
               key={item}
               onClick={() => onClick(item)}
               whileTap={{ scale: 0.96 }}
               animate={{
-                backgroundColor: active ? "#FFD700" : "rgba(255, 255, 255, 0.03)",
-                color: active ? "#0B0410" : "#E9D5FF",
-                borderColor: active ? "#FFD700" : "rgba(255, 255, 255, 0.1)",
+                backgroundColor: bgVal,
+                color: colorVal,
+                borderColor: borderVal,
               }}
               transition={{ duration: 0.2, ease: "easeInOut" }}
-              className="rounded-full border px-4 py-1.5 text-sm font-semibold shadow-sm cursor-pointer border-border"
+              className="rounded-full border px-4 py-1.5 text-sm font-semibold shadow-sm cursor-pointer"
             >
               {item}
             </motion.button>

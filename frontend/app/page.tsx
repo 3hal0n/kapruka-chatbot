@@ -18,7 +18,9 @@ import {
   ChevronRight,
   Check,
   X,
-  ExternalLink
+  ExternalLink,
+  Sun,
+  Moon
 } from "lucide-react";
 
 import { LeftSidebar, Mode } from "@/components/LeftSidebar";
@@ -77,7 +79,7 @@ const MOCK_PRODUCTS: Product[] = [
   }
 ];
 
-export default function GeniePage() {
+export default function RukiPage() {
   // Navigation & Drawer States
   const [mode, setMode] = useState<Mode>("Smart Shopping");
   const [leftOpen, setLeftOpen] = useState(false);
@@ -94,6 +96,23 @@ export default function GeniePage() {
   const [isMicActive, setIsMicActive] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isAudioActive, setIsAudioActive] = useState(true);
+
+  // Theme states
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+
+  // Sync theme class with document element
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (theme === "dark") {
+      root.classList.add("dark");
+    } else {
+      root.classList.remove("dark");
+    }
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => (prev === "light" ? "dark" : "light"));
+  };
 
   // Conversational Workspace Chat States
   const [messages, setMessages] = useState<Message[]>([]);
@@ -114,9 +133,9 @@ export default function GeniePage() {
   useEffect(() => {
     let greeting = "";
     if (language === "සිංහල") {
-      greeting = "ආයුබෝවන්! මම Ruki AI. ඔබට අවශ්‍ය තෑගි තෝරා ගැනීමට මම ඔබට උදව් කරන්නම්. ඔබ සොයන්නේ කුමක්ද?";
+      greeting = "Hello! ආයුබෝවන්! මම Ruki AI. ඔබට අවශ්‍ය තෑගි තෝරා ගැනීමට මම ඔබට උදව් කරන්නම්. ඔබ සොයන්නේ කුමක්ද?";
     } else {
-      greeting = "Hello! Ayubowan! I am Ruki AI. Tell me what you are looking for, and I will guide you to find the perfect gift from Kapruka.";
+      greeting = "Hello! ආයුබෝවන්! I am Ruki AI, your personal Kapruka gifting companion...";
     }
 
     setMessages([
@@ -394,22 +413,32 @@ export default function GeniePage() {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <h1 className="text-base font-extrabold tracking-tight select-none">
-          Kapruka <span style={{ color: "oklch(0.7 0.16 85)" }}>Genie</span>
+        <h1 className="text-base tracking-normal select-none">
+          <span className="font-normal text-foreground/80">Kapruka</span> <span className="font-black text-primary">Ruki</span>
         </h1>
-        <button
-          id="cart-toggle-btn-mobile"
-          onClick={() => setRightOpen(true)}
-          className="relative grid h-10 w-10 place-items-center rounded-xl transition-all duration-300 ease-in-out hover:bg-muted cursor-pointer"
-          aria-label="Open cart"
-        >
-          <ShoppingCart className="h-5 w-5" />
-          {cart.length > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-amber text-[10px] font-bold text-amber-foreground animate-pulse">
-              {cart.reduce((s, i) => s + i.quantity, 0)}
-            </span>
-          )}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            id="theme-toggle-btn-mobile"
+            onClick={toggleTheme}
+            className="grid h-10 w-10 place-items-center rounded-xl text-foreground transition-all duration-300 ease-in-out hover:bg-muted cursor-pointer"
+            aria-label="Toggle theme"
+          >
+            {theme === "light" ? <Moon className="h-4.5 w-4.5" /> : <Sun className="h-4.5 w-4.5" />}
+          </button>
+          <button
+            id="cart-toggle-btn-mobile"
+            onClick={() => setRightOpen(true)}
+            className="relative grid h-10 w-10 place-items-center rounded-xl transition-all duration-300 ease-in-out hover:bg-muted cursor-pointer"
+            aria-label="Open cart"
+          >
+            <ShoppingCart className="h-5 w-5" />
+            {cart.length > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-amber text-[10px] font-bold text-amber-foreground animate-pulse">
+                {cart.reduce((s, i) => s + i.quantity, 0)}
+              </span>
+            )}
+          </button>
+        </div>
       </header>
 
       {/* Modular Left preference drawer */}
@@ -424,6 +453,8 @@ export default function GeniePage() {
         setOccasion={setOccasion}
         open={leftOpen}
         onClose={() => setLeftOpen(false)}
+        theme={theme}
+        toggleTheme={toggleTheme}
       />
 
       {/* Center workspace */}
@@ -455,6 +486,15 @@ export default function GeniePage() {
                 >
                   <Trash2 className="h-4 w-4" /> 
                   <span className="hidden sm:inline">Clear history</span>
+                </button>
+
+                <button
+                  id="theme-toggle-btn-desktop"
+                  onClick={toggleTheme}
+                  className="grid h-9 w-9 place-items-center rounded-xl border border-border bg-surface text-foreground transition-all duration-300 ease-in-out hover:bg-muted cursor-pointer"
+                  aria-label="Toggle theme"
+                >
+                  {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
                 </button>
                 
                 <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 px-3 py-1 text-xs font-bold text-emerald-400 select-none shadow-[0_0_10px_rgba(16,185,129,0.15)]">
@@ -513,6 +553,7 @@ export default function GeniePage() {
                   occasion={occasion}
                   setOccasion={setOccasion}
                   onContextUpdated={handleContextPillUpdated}
+                  theme={theme}
                 />
               )}
 
@@ -545,13 +586,13 @@ export default function GeniePage() {
 
             {/* Fixed Chat Input Access Capsule */}
             <div className="pointer-events-none absolute inset-x-0 bottom-0 px-3 pb-3 md:px-6 md:pb-5">
-              <div className="pointer-events-auto mx-auto flex max-w-3xl items-center gap-2 rounded-2xl border border-white/10 bg-purple-950/40 px-2.5 py-2 shadow-[0_8px_32px_rgba(11,4,16,0.5)] backdrop-blur-md focus-within:ring-1 focus-within:ring-amber/40">
+              <div className="pointer-events-auto mx-auto flex max-w-3xl items-center gap-2 rounded-2xl border border-border bg-surface/80 px-2.5 py-2 shadow-lg backdrop-blur-md focus-within:ring-1 focus-within:ring-ring/40">
                 <button
                   id="mic-toggle-btn"
                   type="button"
                   aria-label="Voice"
                   onClick={() => setIsMicActive(!isMicActive)}
-                  className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition-all duration-300 ease-in-out hover:scale-105 active:scale-95 cursor-pointer ${isMicActive ? "bg-red-500/20 text-red-400 hover:bg-red-500/30" : "bg-white/5 text-muted-foreground hover:bg-white/10 hover:text-foreground"}`}
+                  className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition-all duration-300 ease-in-out hover:scale-105 active:scale-95 cursor-pointer ${isMicActive ? "bg-red-500/20 text-red-400 hover:bg-red-500/30" : "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground"}`}
                 >
                   {isMicActive ? <Mic className="h-4.5 w-4.5" /> : <MicOff className="h-4.5 w-4.5" />}
                 </button>
@@ -560,7 +601,7 @@ export default function GeniePage() {
                   type="button"
                   aria-label="Camera"
                   onClick={() => setIsCameraActive(!isCameraActive)}
-                  className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition-all duration-300 ease-in-out hover:scale-105 active:scale-95 cursor-pointer ${isCameraActive ? "bg-primary-soft text-foreground" : "bg-white/5 text-muted-foreground hover:bg-white/10 hover:text-foreground"}`}
+                  className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition-all duration-300 ease-in-out hover:scale-105 active:scale-95 cursor-pointer ${isCameraActive ? "bg-primary-soft text-primary" : "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground"}`}
                 >
                   {isCameraActive ? <Camera className="h-4.5 w-4.5" /> : <CameraOff className="h-4.5 w-4.5" />}
                 </button>
@@ -569,7 +610,7 @@ export default function GeniePage() {
                   type="button"
                   aria-label="Audio"
                   onClick={() => setIsAudioActive(!isAudioActive)}
-                  className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition-all duration-300 ease-in-out hover:scale-105 active:scale-95 cursor-pointer ${isAudioActive ? "bg-white/5 text-muted-foreground hover:bg-white/10 hover:text-foreground" : "bg-red-500/20 text-red-400 hover:bg-red-500/30"}`}
+                  className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition-all duration-300 ease-in-out hover:scale-105 active:scale-95 cursor-pointer ${isAudioActive ? "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground" : "bg-red-500/20 text-red-400 hover:bg-red-500/30"}`}
                 >
                   {isAudioActive ? <Volume2 className="h-4.5 w-4.5" /> : <VolumeX className="h-4.5 w-4.5" />}
                 </button>
@@ -578,7 +619,7 @@ export default function GeniePage() {
                   id="chat-input-text"
                   value={messageInput}
                   onChange={(e) => setMessageInput(e.target.value)}
-                  placeholder="Ask Genie to search, compare, plan an event…"
+                  placeholder="Ask Ruki to search, compare, plan an event…"
                   className="min-w-0 flex-1 bg-transparent px-2 text-sm font-medium outline-none placeholder:text-muted-foreground/80 text-foreground"
                   onKeyDown={e => e.key === "Enter" && handleSendMessage()}
                 />

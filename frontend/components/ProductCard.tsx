@@ -127,7 +127,7 @@ export function ProductCard({ product, onAdd }: ProductCardProps) {
             href={`https://www.kapruka.com/buyonline/${product.name.toLowerCase().replace(/ /g, "-")}/kid/${code.toLowerCase()}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded-xl border border-border bg-surface px-3 py-2 text-sm font-bold transition-all duration-300 ease-in-out hover:bg-muted flex items-center justify-center gap-1 text-slate-300"
+            className="rounded-xl border border-border bg-surface px-3 py-2 text-sm font-bold transition-all duration-300 ease-in-out hover:bg-muted flex items-center justify-center gap-1 text-foreground/80 hover:text-foreground"
           >
             View
             <ExternalLink className="h-3 w-3" />

@@ -61,9 +61,9 @@ export function RightCart({
               <PackageOpen className="h-7 w-7 text-primary" />
             </div>
             <div>
-              <p className="text-sm font-extrabold tracking-tight text-foreground">Your cart is empty</p>
+              <p className="text-sm font-black uppercase tracking-wider text-foreground">Your cart is empty</p>
               <p className="mt-1 text-xs font-medium leading-relaxed text-muted-foreground">
-                Ask Genie for a gift or tap <span className="font-bold text-primary">Add to Cart</span> on any product to build an order link.
+                Ask Ruki for a gift or tap <span className="font-bold text-primary">Add to Cart</span> on any product to build an order link.
               </p>
             </div>
             <div className="w-full space-y-2">
