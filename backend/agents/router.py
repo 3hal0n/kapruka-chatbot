@@ -7,7 +7,6 @@ from agents import catalog_agent, logistics_agent
 from utils.config import CLAUDE_MODEL_CLASSIFY, CLAUDE_MAX_TOKENS_CLASSIFY
 from utils.prompts import ROUTER_SYSTEM_PROMPT
 from infrastructure.llm.client import chat
-from memory.lt_memory import precompute_embedding
 import time
 from pydantic import BaseModel
 from typing import Literal
@@ -94,14 +93,11 @@ class Router:
         """Streaming version of route() — yields chunks for SEARCH responses."""
         import asyncio
 
-        # 1. Classify and embedding in parallel using asyncio tasks
+        # Classify intents using asyncio task
         start = time.time()
         print('classifying tasks starting...')
-        classify_task = asyncio.create_task(asyncio.to_thread(self.classify_intents, user_message))
-        encode_task = asyncio.create_task(asyncio.to_thread(precompute_embedding, user_message))
-        
-        classification = await classify_task
-        query_vector = await encode_task
+        classification = await asyncio.to_thread(self.classify_intents, user_message)
+        query_vector = []
         end = time.time()
 
         print(f'classifying tasks completed in: {end-start:.2f}s') 

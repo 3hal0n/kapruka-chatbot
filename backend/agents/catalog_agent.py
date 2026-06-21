@@ -2,7 +2,6 @@
 
 import json
 import asyncio
-from memory.lt_memory import search_catalog
 from agents import critic_agent
 from utils.config import CLAUDE_MODEL, CLAUDE_MAX_TOKENS_RESPOND, MAX_REFLECTION_ROUNDS, CATALOG_SEARCH_TOP_K
 from utils.prompts import CATALOG_SYSTEM_PROMPT, REVISE_SYSTEM_PROMPT
@@ -72,6 +71,8 @@ def filter_allergens(products: list, recipient_allergies: set) -> list:
     allergies_clean = [str(a).strip().lower() for a in recipient_allergies if a]
     
     for p in products:
+        if not isinstance(p, dict):
+            continue
         name = str(p.get("name") or "").lower()
         specs = str(p.get("specs") or "").lower()
         category = str(p.get("category") or "").lower()
@@ -104,6 +105,47 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
     except Exception as e:
         print(f"Error calling live kapruka_search_products: {e}")
         products = []
+
+    # Ensure products is a list of dictionaries
+    if isinstance(products, str) or not isinstance(products, list):
+        products = []
+    else:
+        products = [p for p in products if isinstance(p, dict)]
+
+    # Fallback to broader queries if results are empty or very low (less than 3 items)
+    if len(products) < 3:
+        fallback_queries = []
+        sq_lower = search_query.lower()
+        if "birthday" in sq_lower or "anniversary" in sq_lower or "gift" in sq_lower:
+            fallback_queries = ["gift", "cake", "chocolate"]
+        
+        for fq in fallback_queries:
+            if fq != sq_lower:
+                try:
+                    print(f"Low results for '{search_query}'. Trying fallback search query: '{fq}'")
+                    fallback_res = await kapruka_search_products(fq, limit=CATALOG_SEARCH_TOP_K)
+                    fb_products = []
+                    if isinstance(fallback_res, dict):
+                        fb_products = fallback_res.get("products") or fallback_res.get("result") or []
+                    elif isinstance(fallback_res, list):
+                        fb_products = fallback_res
+                    
+                    if fb_products:
+                        fb_products = [p for p in fb_products if isinstance(p, dict)]
+                        products.extend(fb_products)
+                        # Remove duplicates based on product ID
+                        seen = set()
+                        deduped = []
+                        for p in products:
+                            pid = p.get("id") or p.get("code")
+                            if pid not in seen:
+                                seen.add(pid)
+                                deduped.append(p)
+                        products = deduped
+                        if len(products) >= 5:
+                            break
+                except Exception as e:
+                    print(f"Fallback query '{fq}' failed: {e}")
 
     if not products:
         yield "Sorry! I couldn't find any products matching your description on Kapruka right now."
