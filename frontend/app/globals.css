@@ -1,21 +1,43 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #0B0410;
+  --foreground: #F3F4F6;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: #1E0B36;
+  --color-surface-soft: #19082E;
+  
+  /* Brand Primary Purple */
+  --color-primary: #441B71;
+  --color-primary-foreground: #ffffff;
+  --color-primary-soft: #251044;
+  
+  /* Accent Amber/Gold */
+  --color-amber: #FFD700;
+  --color-amber-foreground: #0B0410;
+  
+  /* Cyberpunk border tint (white/10) */
+  --color-border: rgba(255, 255, 255, 0.1);
+  
+  /* Muted states */
+  --color-muted: rgba(255, 255, 255, 0.05);
+  --color-muted-foreground: #C8B3E4;
+  
+  /* Focus ring */
+  --color-ring: #FFD700;
+  
   --font-sans: var(--font-plus-jakarta-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #0B0410;
+    --foreground: #F3F4F6;
   }
 }
 
@@ -23,5 +45,4 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-plus-jakarta-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-}
-
+}
