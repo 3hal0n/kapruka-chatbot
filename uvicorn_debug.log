@@ -1,0 +1,3 @@
+Loaded 4 recipient profiles.
+C:\Users\ADMIN\AppData\Local\Programs\Python\Python311\Lib\site-packages\transformers\utils\hub.py:123: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(

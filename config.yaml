@@ -1,0 +1,30 @@
+claude:
+  model: openai/gpt-5.4-mini
+  model_intent_classify: openai/gpt-5.4-mini
+  model_logistics : openai/gpt-5.4-mini
+  max_tokens_classify: 512
+  max_tokens_respond: 600
+  max_tokens_critique: 150
+  max_tokens_logistics: 300
+
+catalog_agent:
+  max_reflection_rounds: 3
+  search_top_k: 8
+  max_products_after_filter: 10
+
+short_term_memory:
+  max_turns: 10
+
+lt_memory:
+  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  search_top_k: 10
+
+qdrant:
+  collection_name: "kapruka_catalog"
+  embedding_dim: 384
+  timeout: 30
+
+ingest:
+  catalog_path: "data/catalog.json"
+  embedding_model: "all-MiniLM-L6-v2"
+  batch_size: 100

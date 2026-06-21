@@ -1,0 +1,11 @@
+openai
+playwright
+qdrant-client
+sentence-transformers
+numpy
+pyyaml
+python-dotenv
+streamlit
+pydantic
+fastapi
+uvicorn
