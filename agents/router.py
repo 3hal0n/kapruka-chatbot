@@ -74,22 +74,21 @@ class Router:
                 "tracking_code": None
             }
 
-    def route_stream(self, user_message: str, recipient_context: dict | None = None):
+    async def route_stream(self, user_message: str, recipient_context: dict | None = None):
         """Streaming version of route() — yields chunks for SEARCH responses."""
+        import asyncio
 
-        # 1. Classify and embedding parallely to enhance response time
+        # 1. Classify and embedding in parallel using asyncio tasks
         start = time.time()
-        with concurrent.futures.ThreadPoolExecutor() as ex:
-
-            print('classifying thread pool starts...')
-            classify_future = ex.submit(self.classify_intents,user_message)
-            encode_future = ex.submit(precompute_embedding,user_message)
-            classification = classify_future.result()
-            query_vector = encode_future.result()
+        print('classifying tasks starting...')
+        classify_task = asyncio.create_task(asyncio.to_thread(self.classify_intents, user_message))
+        encode_task = asyncio.create_task(asyncio.to_thread(precompute_embedding, user_message))
+        
+        classification = await classify_task
+        query_vector = await encode_task
         end = time.time()
 
-        print(f'classifying thread pool ends... : {end-start}s') 
-        
+        print(f'classifying tasks completed in: {end-start:.2f}s') 
 
         intents = classification.get("intents", ["SEARCH"])
 
@@ -189,56 +188,37 @@ class Router:
                 t.start()
                 yield "<<PREF_SAVING>>"
 
-        """To make efficient the response we're using a strategy where
-        the logistic intent is fired then after that search intent is fired and streamed
-        after that logistic response is joined
-        
-"""     
-        #initializing them before in case executor gets failed
-        logistics_future = None   
-        logistics_executor = None      
-
-
         # 5. Firing logistics in background
+        logistics_task = None
         if "LOGISTICS" in intents:
-            logistics_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-            print('logistic intent thread fired...')
-
-            logistics_future = logistics_executor.submit(
-                logistics_agent.run,
-                location=classification.get("location"),
-                deadline=classification.get("deadline"),
-                tracking_code=classification.get("tracking_code")
+            print('logistic intent async task fired...')
+            logistics_task = asyncio.create_task(
+                logistics_agent.run(
+                    location=classification.get("location"),
+                    deadline=classification.get("deadline"),
+                    tracking_code=classification.get("tracking_code")
+                )
             )
             yield "<<LOGISTICS>>"
                 
-        try:
-            # 6. Stream search — logistics already running in background
-            if "SEARCH" in intents:
-                for chunk in catalog_agent.run_stream(
-                    recipients=all_recipients,
-                    search_query=classification.get("search_query") or user_message,
-                    old_profile=old_profile,
-                    new_profile=new_profile,
-                    query_vector = query_vector
-                ):
-                    if chunk != "<<CLEAR>>":
-                        full_response_chunks.append(chunk)
-                    yield chunk 
+        # 6. Stream search — logistics already running in background
+        if "SEARCH" in intents:
+            async for chunk in catalog_agent.run_stream(
+                recipients=all_recipients,
+                search_query=classification.get("search_query") or user_message,
+                old_profile=old_profile,
+                new_profile=new_profile,
+                query_vector=query_vector
+            ):
+                if chunk != "<<CLEAR>>":
+                    full_response_chunks.append(chunk)
+                yield chunk 
 
-
-            # 7. Logistics already done by now — yields instantly
-            if "LOGISTICS" in intents and logistics_future:
-                logistics_result = logistics_future.result()
-                yield "\n\n" + logistics_result
-                full_response_chunks.append("\n\n" + logistics_result)
-        
-        finally:
-            if logistics_executor:
-                logistics_executor.shutdown(wait=False)
-                print('logistics_executor shut down.')
-
-
+        # 7. Logistics already done by now — yield it
+        if "LOGISTICS" in intents and logistics_task:
+            logistics_result = await logistics_task
+            yield "\n\n" + logistics_result
+            full_response_chunks.append("\n\n" + logistics_result)
 
         # 8. Save to memory
         full_response = "".join(full_response_chunks)

@@ -111,35 +111,9 @@ async def chat_endpoint(request: ChatRequest):
     router = get_router(request.user_id)
 
     async def sse_generator():
-        # Queue to pass chunks between the synchronous generator worker thread and our async stream
-        queue = asyncio.Queue()
-        loop = asyncio.get_running_loop()
         start_time = time.time()
-
-        # Thread-worker task to consume the synchronous generator
-        def worker():
-            try:
-                logger.info(f"Worker thread starting for user_id={request.user_id}")
-                for chunk in router.route_stream(request.message, request.recipient_context):
-                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
-            except Exception as ex:
-                logger.exception(f"Error inside router.route_stream worker: {ex}")
-                loop.call_soon_threadsafe(queue.put_nowait, ex)
-            finally:
-                loop.call_soon_threadsafe(queue.put_nowait, None)  # Sentinel to stop
-
-        # Launch the synchronous generator loop in a separate worker thread
-        asyncio.create_task(asyncio.to_thread(worker))
-
         try:
-            while True:
-                chunk = await queue.get()
-                if chunk is None:
-                    break
-                if isinstance(chunk, Exception):
-                    yield f"event: error\ndata: {json.dumps({'message': str(chunk)})}\n\n"
-                    break
-
+            async for chunk in router.route_stream(request.message, request.recipient_context):
                 # 1. Classification event
                 if isinstance(chunk, str) and chunk.startswith("<<CLASSIFICATION>>:"):
                     try:

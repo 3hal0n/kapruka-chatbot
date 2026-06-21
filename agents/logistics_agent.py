@@ -1,97 +1,112 @@
 # agents/logistics_agent.py
 
+import json
 from utils.config import CLAUDE_MODEL_LOGISTICS, CLAUDE_MAX_TOKENS_LOGISTIC
 from utils.prompts import LOGISTICS_SYSTEM_PROMPT
 from infrastructure.llm.client import chat
 
-# Kapruka delivery coverage for Sri Lankan districts
-# tier 1 = next-day, tier 2 = 2-3 days, tier 3 = 3-5 days
-DISTRICT_COVERAGE = {
-    # Western Province
-    "colombo":       {"covered": True,  "tier": 1, "label": "Colombo"},
-    "gampaha":       {"covered": True,  "tier": 1, "label": "Gampaha"},
-    "kalutara":      {"covered": True,  "tier": 1, "label": "Kalutara"},
-    # Central Province
-    "kandy":         {"covered": True,  "tier": 2, "label": "Kandy"},
-    "matale":        {"covered": True,  "tier": 2, "label": "Matale"},
-    "nuwara eliya":  {"covered": True,  "tier": 2, "label": "Nuwara Eliya"},
-    # Southern Province
-    "galle":         {"covered": True,  "tier": 2, "label": "Galle"},
-    "matara":        {"covered": True,  "tier": 2, "label": "Matara"},
-    "hambantota":    {"covered": True,  "tier": 3, "label": "Hambantota"},
-    # Northern Province
-    "jaffna":        {"covered": True,  "tier": 3, "label": "Jaffna"},
-    "kilinochchi":   {"covered": False, "tier": None, "label": "Kilinochchi"},
-    "mannar":        {"covered": False, "tier": None, "label": "Mannar"},
-    "vavuniya":      {"covered": True,  "tier": 3, "label": "Vavuniya"},
-    "mullaitivu":    {"covered": False, "tier": None, "label": "Mullaitivu"},
-    # Eastern Province
-    "trincomalee":   {"covered": True,  "tier": 3, "label": "Trincomalee"},
-    "batticaloa":    {"covered": True,  "tier": 3, "label": "Batticaloa"},
-    "ampara":        {"covered": True,  "tier": 3, "label": "Ampara"},
-    # North Western Province
-    "kurunegala":    {"covered": True,  "tier": 2, "label": "Kurunegala"},
-    "puttalam":      {"covered": True,  "tier": 2, "label": "Puttalam"},
-    # North Central Province
-    "anuradhapura":  {"covered": True,  "tier": 2, "label": "Anuradhapura"},
-    "polonnaruwa":   {"covered": True,  "tier": 3, "label": "Polonnaruwa"},
-    # Uva Province
-    "badulla":       {"covered": True,  "tier": 3, "label": "Badulla"},
-    "monaragala":    {"covered": True,  "tier": 3, "label": "Monaragala"},
-    # Sabaragamuwa Province
-    "ratnapura":     {"covered": True,  "tier": 2, "label": "Ratnapura"},
-    "kegalle":       {"covered": True,  "tier": 2, "label": "Kegalle"},
-}
 
-TIER_DESCRIPTION = {
-    1: "next-day delivery",
-    2: "2–3 day delivery",
-    3: "3–5 day delivery",
-}
+async def run(location: str | None, deadline: str | None = None, tracking_code: str | None = None) -> str:
+    from infrastructure.mcp.client import kapruka_list_delivery_cities, kapruka_check_delivery, kapruka_track_order
 
-
-def _lookup(location: str) -> dict:
-    """Return coverage info for a location string, or None if not found."""
-    key = location.strip().lower()
-    return DISTRICT_COVERAGE.get(key)
-
-
-def run(location: str | None, deadline: str | None = None, tracking_code: str | None = None) -> str:
-    # Tracking flow — Playwright integration goes here
+    # 1. Live Order Tracking Flow
     if tracking_code:
-        return f"[Tracking stub] Order {tracking_code} — Playwright lookup not yet implemented."
-        # Browser automation where it goes and get the tracking information 
-    
-
+        try:
+            tracking_info = await kapruka_track_order(tracking_code)
+            if isinstance(tracking_info, dict):
+                status = tracking_info.get("status") or tracking_info.get("result", {}).get("status") or "Unknown"
+                last_loc = tracking_info.get("last_location") or tracking_info.get("result", {}).get("last_location") or "N/A"
+                del_date = tracking_info.get("delivery_date") or tracking_info.get("result", {}).get("delivery_date") or "N/A"
+                
+                return (
+                    f"Order tracking update for #{tracking_code}:\n"
+                    f"Status: {status}\n"
+                    f"Current Location: {last_loc}\n"
+                    f"Est. Delivery Date: {del_date}"
+                )
+            else:
+                return f"Tracking details for #{tracking_code}: {str(tracking_info)}"
+        except Exception as e:
+            return f"[Tracking] Failed to track order #{tracking_code} via live tools: {e}"
 
     if not location:
         return (
-            "I'd be happy to check delivery for you! "
-            "Could you let me know which district or city in Sri Lanka you'd like the gift delivered to?"
+            "I'd be happy to check delivery availability and speed! "
+            "Could you tell me which city or location in Sri Lanka you want the gift delivered to?"
         )
 
-    coverage = _lookup(location)
+    # 2. Retrieve live delivery cities
+    try:
+        cities_res = await kapruka_list_delivery_cities()
+        if isinstance(cities_res, dict):
+            cities = cities_res.get("cities") or cities_res.get("result") or []
+        else:
+            cities = cities_res or []
+    except Exception as e:
+        print(f"Error fetching live delivery cities: {e}")
+        cities = []
 
-    # no LLM needed
-    if coverage is not None:
-        if not coverage["covered"]:
-            return (
-                f"Unfortunately, Kapruka doesn't currently deliver to {coverage['label']}. "
-                "You may want to consider a nearby district or contact Kapruka directly for alternatives."
-            )
-        tier = coverage["tier"]
-        speed = TIER_DESCRIPTION[tier]
-        msg = f"Great news — Kapruka delivers to {coverage['label']} with {speed}."
-        if deadline:
-            msg += f" Your deadline is {deadline}, so that should work perfectly!"
-        return msg
+    # Map user location input to canonical delivery cities
+    canonical_city = None
+    if cities:
+        loc_clean = location.strip().lower()
+        # Direct match check
+        for city in cities:
+            if str(city).lower() == loc_clean:
+                canonical_city = str(city)
+                break
+        
+        # Substring match check
+        if not canonical_city:
+            for city in cities:
+                if str(city).lower() in loc_clean or loc_clean in str(city).lower():
+                    canonical_city = str(city)
+                    break
+        
+        # LLM fallback match check
+        if not canonical_city:
+            matching_prompt = f"""You are a Sri Lankan geography expert mapping user inputs to canonical delivery cities.
+User Input Location: "{location}"
+Canonical cities: {", ".join(str(c) for c in cities[:120])}
 
-    # Case 1 — unknown location only, fall back to LLM
+If the location matches or is inside one of the canonical cities, return ONLY that exact canonical city name from the list.
+If it does not match any, return "None".
+Do not return any extra text or markdown, only the matched city name or "None"."""
+            try:
+                resolved = chat(
+                    system=matching_prompt,
+                    messages=[],
+                    max_tokens=20,
+                    model=CLAUDE_MODEL_LOGISTICS
+                ).strip()
+                if resolved and resolved != "None" and resolved in [str(c) for c in cities]:
+                    canonical_city = resolved
+            except Exception:
+                pass
+
+    # 3. Check delivery timing and rates for canonical city
+    if canonical_city:
+        try:
+            delivery_info = await kapruka_check_delivery(canonical_city)
+            if isinstance(delivery_info, dict):
+                cost = delivery_info.get("cost") or delivery_info.get("delivery_fee") or "LKR 350"
+                timeframe = delivery_info.get("timeframe") or delivery_info.get("estimated_delivery") or "next-day"
+                status = delivery_info.get("status") or "Available"
+                
+                msg = f"Kapruka delivers to {canonical_city}. Standard timing is {timeframe} with a delivery fee of {cost}. Status: {status}."
+                if deadline:
+                    msg += f" Your deadline is {deadline}, which aligns perfectly with this timeframe!"
+                return msg
+            else:
+                return f"Delivery update for {canonical_city}: {str(delivery_info)}"
+        except Exception as e:
+            return f"Checked delivery for {canonical_city}, but encountered an error: {e}"
+
+    # 4. Fallback response if mapping fails
     context = (
         f"Location requested: {location}\n"
         f"Deadline: {deadline or 'not specified'}"
     )
-
     return chat(
         system=LOGISTICS_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": context}],
