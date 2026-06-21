@@ -1,36 +1,43 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Kapruka Ruki AI Chatbot — Frontend
 
-## Getting Started
+A next-generation, responsive React/Next.js dashboard built as a premium conversational shopping assistant for [Kapruka](https://www.kapruka.com), Sri Lanka's leading gifting platform.
 
-First, run the development server:
+## ✨ Features
 
+- **Fluid Transitions**: Powered by `framer-motion` for a smooth, high-fidelity experience.
+- **Brand Consistency**: Styled using Kapruka's signature brand colors (Deep Purple `#441B71` and Accent Amber Gold `#FFD700`) with custom dark/light theme support.
+- **SSE Streaming Integration**: Asynchronously reads SSE response packages from the FastAPI backend, updating text tokens and component states in real-time.
+- **Product Carousel Component**: Displays rich product listings from semantic search results, supporting full product descriptions, image loading, matching scores, and direct "Add to Cart" functionality.
+- **Cart & Order System**: Interactive cart management panel with total calculations (including delivery fees checked from live MCP endpoint), plus a dynamic modal sequence to trigger order links using live MCP tools.
+
+---
+
+## 🛠️ Getting Started
+
+### 1. Install Dependencies
+Ensure you have Node.js installed, then run:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Configure Environment Variables
+By default, the client points to the backend server at `http://localhost:8000`. You can configure this by creating a `.env.local` file:
+```env
+NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 3. Run Development Server
+```bash
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open [http://localhost:3000](http://localhost:3000) in your browser to view the app.
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## 📁 Key File Structure
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- **`app/page.tsx`**: Main entrypoint containing the chat loop, session states, and message renderer.
+- **`components/ChatInputCapsule.tsx`**: Modular input container with quick-options, typing indicators, and message submission controls.
+- **`components/OrderModals.tsx`**: Multi-step checkout dialog capturing recipient info, address, phone number, and executing order link creation.
+- **`components/WorkspaceHeader.tsx`**: Top navigation header providing brand layout, session resetting, and the Light/Dark theme toggle.

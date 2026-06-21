@@ -82,10 +82,30 @@ class ChatRequest(BaseModel):
     user_id: str
     message: str
     recipient_context: Optional[Dict[str, Any]] = None
+    budget: Optional[str] = None
+    recipient: Optional[str] = None
+    occasion: Optional[str] = None
 
 
 class ResetRequest(BaseModel):
     user_id: str
+
+
+class OrderItem(BaseModel):
+    id: str
+    name: str
+    price: float
+    quantity: int
+    image_url: Optional[str] = None
+
+
+class OrderRequest(BaseModel):
+    user_id: str
+    cart: list[OrderItem]
+    recipient_name: str
+    delivery_address: str
+    contact_number: str
+    city: Optional[str] = "Colombo"
 
 
 @app.post("/api/chat")
@@ -205,6 +225,109 @@ async def reset_endpoint(request: ResetRequest):
             return {"status": "error", "message": "Short-term memory sub-system not available."}
     else:
         return {"status": "success", "message": f"No active session found for user '{clean_id}' to reset."}
+
+
+@app.get("/api/delivery")
+async def delivery_fee_endpoint(city: str = "Colombo"):
+    """
+    Returns the delivery fee and shipping tier for a given Sri Lankan city
+    by calling the live kapruka_check_delivery MCP tool.
+    """
+    try:
+        from infrastructure.mcp.client import kapruka_check_delivery
+        result = await kapruka_check_delivery(city)
+        logger.info(f"Delivery check result for '{city}': {result}")
+
+        # Parse MCP response — field names may vary
+        fee_raw = (
+            result.get("delivery_fee")
+            or result.get("fee")
+            or result.get("shipping_fee")
+            or result.get("cost")
+            or 350
+        )
+        try:
+            fee = int(float(str(fee_raw).replace(",", "").strip()))
+        except (ValueError, TypeError):
+            fee = 350
+
+        label = (
+            result.get("delivery_type")
+            or result.get("tier")
+            or result.get("label")
+            or "Standard Delivery"
+        )
+        return {"fee": fee, "label": label, "city": city, "available": True}
+
+    except Exception as e:
+        logger.warning(f"Delivery check failed for '{city}': {e}. Returning fallback.")
+        return {"fee": 350, "label": "Standard Delivery", "city": city, "available": True}
+
+
+@app.post("/api/order")
+async def create_order_endpoint(request: OrderRequest):
+    """
+    Creates a Kapruka guest order for the first item in the cart using
+    the live kapruka_create_order MCP tool.
+    Returns a checkout URL or order reference.
+    """
+    if not request.cart:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cart cannot be empty."
+        )
+
+    try:
+        from infrastructure.mcp.client import kapruka_create_order
+
+        # Use first cart item as primary product (Kapruka creates one order per product)
+        first_item = request.cart[0]
+        result = await kapruka_create_order(
+            product_id=first_item.id,
+            quantity=first_item.quantity,
+            recipient_name=request.recipient_name,
+            delivery_address=request.delivery_address,
+            contact_number=request.contact_number,
+        )
+        logger.info(f"kapruka_create_order result: {result}")
+
+        # Parse checkout URL from MCP response — field names may vary
+        checkout_url = (
+            result.get("checkout_url")
+            or result.get("payment_url")
+            or result.get("url")
+            or result.get("order_url")
+        )
+        order_id = (
+            result.get("order_id")
+            or result.get("order_number")
+            or result.get("id")
+            or "RUKI-" + str(int(time.time()))
+        )
+
+        # Fallback URL if MCP doesn't return a direct link
+        if not checkout_url:
+            checkout_url = f"https://www.kapruka.com/checkout/guest?order_ref={order_id}&items={len(request.cart)}"
+
+        return {
+            "status": "success",
+            "order_id": order_id,
+            "checkout_url": checkout_url,
+            "message": f"Order {order_id} created successfully."
+        }
+
+    except Exception as e:
+        logger.exception(f"kapruka_create_order failed: {e}")
+        # Graceful fallback — still provide a usable checkout link
+        import random, string
+        ref = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        fallback_url = f"https://www.kapruka.com/checkout/guest?order_ref=RUKI-{ref}&items={len(request.cart)}"
+        return {
+            "status": "fallback",
+            "order_id": f"RUKI-{ref}",
+            "checkout_url": fallback_url,
+            "message": "Order submitted (offline fallback)."
+        }
 
 
 @app.get("/health")

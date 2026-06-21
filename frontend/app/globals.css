@@ -1,26 +1,97 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Light Mode default design tokens */
+  --background: #F8F7FA;
+  --foreground: #1F2937;
+  --surface: #ffffff;
+  --border: #E5E7EB;
+  
+  --primary: #441B71;
+  --primary-foreground: #ffffff;
+  --primary-soft: #F5F3F8;
+  
+  --amber: #FFD700;
+  --amber-foreground: #0B0410;
+  
+  --muted: #F3F4F6;
+  --muted-foreground: #6B7280;
+  
+  --ring: #441B71;
+  
+  --scroll-thumb: rgba(0, 0, 0, 0.15);
+  --scroll-thumb-hover: rgba(0, 0, 0, 0.3);
+}
+
+html.dark {
+  /* Dark Mode cyberpunk theme overrides */
+  --background: #0B0410;
+  --foreground: #F3F4F6;
+  --surface: #1E0B36;
+  --border: rgba(255, 255, 255, 0.1);
+  
+  --primary: #441B71;
+  --primary-foreground: #ffffff;
+  --primary-soft: #251044;
+  
+  --amber: #FFD700;
+  --amber-foreground: #0B0410;
+  
+  --muted: rgba(255, 255, 255, 0.05);
+  --muted-foreground: #C8B3E4;
+  
+  --ring: #FFD700;
+  
+  --scroll-thumb: rgba(255, 255, 255, 0.15);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.3);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+  
+  --color-amber: var(--amber);
+  --color-amber-foreground: var(--amber-foreground);
+  
+  --color-ring: var(--ring);
+  
+  --font-sans: var(--font-plus-jakarta-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-plus-jakarta-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
+
+/* Custom scrollbar styling for webkit browsers */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 9999px;
+  transition: background 0.2s ease-in-out;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hover);
+}
+
+

@@ -95,7 +95,7 @@ async def custom_sse_client(
             async with http_client.stream("GET", url, timeout=httpx.Timeout(5.0, read=300.0)) as r:
                 logger.info(f"SSE stream response status: {r.status_code}")
                 current_event = None
-                async for line in r.iter_lines():
+                async for line in r.aiter_lines():
                     line = line.strip()
                     if not line:
                         continue

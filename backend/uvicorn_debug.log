@@ -1,46 +1,66 @@
 Loaded 4 recipient profiles.
 C:\Users\ADMIN\AppData\Local\Programs\Python\Python311\Lib\site-packages\transformers\utils\hub.py:123: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
   warnings.warn(
-INFO:     Started server process [1120]
+INFO:     Started server process [23084]
 INFO:     Waiting for application startup.
-2026-06-21 10:45:09,184 [INFO] kapruka-fastapi: Starting lifespan warmup...
-2026-06-21 10:45:16,261 [INFO] kapruka-mcp-client: Connecting to Kapruka remote MCP server at https://mcp.kapruka.com/mcp...
-2026-06-21 10:45:16,411 [INFO] kapruka-mcp-client: Performing handshake to retrieve session ID...
-2026-06-21 10:45:16,636 [INFO] httpx: HTTP Request: GET https://mcp.kapruka.com/mcp "HTTP/1.1 406 Not Acceptable"
-2026-06-21 10:45:16,637 [INFO] kapruka-mcp-client: Handshake successful. Session ID generated: fa501cbb7f5d408982696cc1e6ccf622
-2026-06-21 10:45:16,658 [INFO] kapruka-mcp-client: Starting custom SSE reader stream...
-2026-06-21 10:45:16,659 [INFO] kapruka-mcp-client: Starting custom POST writer...
-2026-06-21 10:45:16,867 [INFO] httpx: HTTP Request: POST https://mcp.kapruka.com/mcp "HTTP/1.1 200 OK"
-2026-06-21 10:45:16,870 [INFO] kapruka-mcp-client: Kapruka MCP connection successfully initialized.
-2026-06-21 10:45:16,870 [INFO] kapruka-fastapi: Warmup complete and MCP client initialized. Ready to serve requests.
+2026-06-21 13:06:37,586 [INFO] kapruka-fastapi: Starting lifespan warmup...
+2026-06-21 13:06:37,587 [INFO] kapruka-mcp-client: Connecting to Kapruka remote MCP server at https://mcp.kapruka.com/mcp...
+2026-06-21 13:06:37,673 [INFO] kapruka-mcp-client: Performing handshake to retrieve session ID...
+2026-06-21 13:06:37,912 [INFO] httpx: HTTP Request: GET https://mcp.kapruka.com/mcp "HTTP/1.1 406 Not Acceptable"
+2026-06-21 13:06:37,912 [INFO] kapruka-mcp-client: Handshake successful. Session ID generated: 66164457d67047b2880b37e4f23a34b4
+2026-06-21 13:06:37,927 [INFO] kapruka-mcp-client: Starting custom SSE reader stream...
+2026-06-21 13:06:37,929 [INFO] kapruka-mcp-client: Starting custom POST writer...
+2026-06-21 13:06:38,155 [INFO] httpx: HTTP Request: POST https://mcp.kapruka.com/mcp "HTTP/1.1 200 OK"
+2026-06-21 13:06:38,159 [INFO] kapruka-mcp-client: Kapruka MCP connection successfully initialized.
+2026-06-21 13:06:38,159 [INFO] kapruka-fastapi: Warmup complete and MCP client initialized. Ready to serve requests.
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://127.0.0.1:8099 (Press CTRL+C to quit)
-INFO:     127.0.0.1:59500 - "GET /health HTTP/1.1" 200 OK
-2026-06-21 10:45:17,021 [INFO] kapruka-fastapi: Creating new Router session for user_id: test_user_sse
-INFO:     127.0.0.1:59503 - "POST /api/chat HTTP/1.1" 200 OK
+2026-06-21 13:06:38,335 [INFO] httpx: HTTP Request: POST https://mcp.kapruka.com/mcp "HTTP/1.1 202 Accepted"
+INFO:     127.0.0.1:61998 - "GET /health HTTP/1.1" 200 OK
+2026-06-21 13:06:39,397 [INFO] kapruka-fastapi: Creating new Router session for user_id: test_user_sse
+INFO:     127.0.0.1:61999 - "POST /api/chat HTTP/1.1" 200 OK
 classifying tasks starting...
-Batches:   0%|          | 0/1 [00:00<?, ?it/s]2026-06-21 10:45:17,054 [INFO] httpx: HTTP Request: POST https://mcp.kapruka.com/mcp "HTTP/1.1 202 Accepted"
-Batches: 100%|##########| 1/1 [00:00<00:00, 23.68it/s]
-classifying tasks completed in: 0.05s
+Batches:   0%|          | 0/1 [00:00<?, ?it/s]Batches: 100%|##########| 1/1 [00:00<00:00, 34.95it/s]
+2026-06-21 13:06:39,461 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-06-21 13:06:53,151 [INFO] httpx: HTTP Request: GET https://mcp.kapruka.com/mcp "HTTP/1.1 200 OK"
+2026-06-21 13:06:53,151 [INFO] kapruka-mcp-client: SSE stream response status: 200
+2026-06-21 13:08:05,853 [INFO] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-06-21 13:08:05,855 [INFO] google_genai.models: AFC remote call 1 is done.
+classifying tasks completed in: 86.46s
 Customer        : test_user_sse
-Router Decision : ['LOGISTICS']
+Router Decision : ['PREFERENCE_UPDATE', 'SEARCH', 'LOGISTICS']
 Extracted       : {
   "intents": [
+    "PREFERENCE_UPDATE",
+    "SEARCH",
     "LOGISTICS"
   ],
   "allergies": {},
-  "preferences": {},
-  "search_recipient": null,
+  "preferences": {
+    "wife": [
+      "chocolate"
+    ]
+  },
+  "search_recipient": "wife",
   "location": "Colombo",
-  "deadline": null,
-  "search_query": null,
+  "deadline": "birthday",
+  "search_query": "birthday gift",
   "tracking_code": null
 }
 old profile is {'allergies': {'wife': ['almonds']}, 'preferences': {'wife': ['milk chocolate']}, 'location': {'wife': 'Colombo'}}
-new profile is {'allergies': {'wife': []}, 'preferences': {'wife': []}, 'location': {'wife': 'Colombo'}}
+new profile is {'allergies': {'wife': []}, 'preferences': {'wife': ['chocolate']}, 'location': {'wife': 'Colombo'}}
+preference update thread starts...
 logistic intent async task fired...
-2026-06-21 10:45:17,074 [INFO] kapruka-mcp-client: Calling MCP tool: kapruka_list_delivery_cities with arguments={'params': {'limit': 50, 'response_format': 'json', 'query': 'Colombo'}}
-2026-06-21 10:45:17,282 [INFO] httpx: HTTP Request: POST https://mcp.kapruka.com/mcp "HTTP/1.1 200 OK"
-2026-06-21 10:45:17,458 [INFO] httpx: HTTP Request: POST https://mcp.kapruka.com/mcp "HTTP/1.1 200 OK"
-2026-06-21 10:45:17,637 [INFO] kapruka-mcp-client: Calling MCP tool: kapruka_check_delivery with arguments={'params': {'city': 'Colombo 01', 'response_format': 'json'}}
-2026-06-21 10:45:18,596 [INFO] httpx: HTTP Request: POST https://mcp.kapruka.com/mcp "HTTP/1.1 200 OK"
+2026-06-21 13:08:05,864 [INFO] kapruka-mcp-client: Calling MCP tool: kapruka_search_products with arguments={'params': {'q': 'birthday gift', 'response_format': 'json', 'limit': 8}}
+2026-06-21 13:08:05,866 [INFO] kapruka-mcp-client: Calling MCP tool: kapruka_list_delivery_cities with arguments={'params': {'limit': 50, 'response_format': 'json', 'query': 'Colombo'}}
+Profiles saved to F:\Kapruka-Chatbot\backend\data\recipient_profiles.json
+preference update thread ends...
+Profile updated: wife
+2026-06-21 13:08:06,564 [INFO] httpx: HTTP Request: POST https://mcp.kapruka.com/mcp "HTTP/1.1 200 OK"
+2026-06-21 13:08:06,935 [INFO] httpx: HTTP Request: POST https://mcp.kapruka.com/mcp "HTTP/1.1 200 OK"
+2026-06-21 13:08:07,120 [INFO] httpx: HTTP Request: POST https://mcp.kapruka.com/mcp "HTTP/1.1 200 OK"
+2026-06-21 13:08:07,178 [INFO] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-06-21 13:08:07,178 [INFO] google_genai.models: AFC remote call 1 is done.
+2026-06-21 13:08:07,313 [INFO] httpx: HTTP Request: POST https://mcp.kapruka.com/mcp "HTTP/1.1 200 OK"
+2026-06-21 13:08:07,325 [INFO] kapruka-mcp-client: Calling MCP tool: kapruka_check_delivery with arguments={'params': {'city': 'Colombo 01', 'response_format': 'json'}}
+2026-06-21 13:08:07,864 [INFO] httpx: HTTP Request: POST https://mcp.kapruka.com/mcp "HTTP/1.1 200 OK"
