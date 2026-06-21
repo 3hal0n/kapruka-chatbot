@@ -246,121 +246,127 @@ export default function RukiPage() {
   };
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background text-foreground antialiased font-sans">
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground antialiased font-sans">
 
-      {/* Mobile top bar */}
-      <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-white/10 bg-[#3c1b63] text-white px-4 md:hidden">
-        <button id="sidebar-toggle-btn-mobile" onClick={() => setLeftOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer" aria-label="Open menu">
-          <Menu className="h-5 w-5" />
-        </button>
-        <img src="/android-chrome-192x192.png" alt="Kapruka Logo" className="h-9 w-auto object-contain select-none" />
+      {/* Main Top Header (Purple/Blue like Kapruka, always visible, replaces text branding with logo) */}
+      <header className="flex h-16 w-full items-center justify-between border-b border-white/10 bg-[#3c1b63] text-white px-4 md:px-6 shrink-0 z-40 select-none">
+        <div className="flex items-center gap-3">
+          <button id="sidebar-toggle-btn-mobile" onClick={() => setLeftOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer md:hidden" aria-label="Open menu">
+            <Menu className="h-5 w-5" />
+          </button>
+          <img src="/ruki.png" alt="Kapruka Logo" className="h-10 w-auto object-contain select-none" />
+        </div>
         <div className="flex items-center gap-1">
-          <button id="theme-toggle-btn-mobile" onClick={toggleTheme} className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer" aria-label="Toggle theme">
+          <button id="theme-toggle-btn-header" onClick={toggleTheme} className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer" aria-label="Toggle theme">
             {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
           </button>
-          <button id="cart-toggle-btn-mobile" onClick={() => setRightOpen(true)} className="relative grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer" aria-label="Open cart">
+          <button id="cart-toggle-btn-header" onClick={() => setRightOpen(true)} className="relative grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer" aria-label="Open cart">
             <ShoppingCart className="h-5 w-5" />
             {cart.length > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-amber text-[10px] font-bold text-amber-foreground animate-pulse">{cart.reduce((s, i) => s + i.quantity, 0)}</span>}
           </button>
         </div>
       </header>
 
-      <LeftSidebar mode={mode} setMode={setMode} budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} open={leftOpen} onClose={() => setLeftOpen(false)} theme={theme} toggleTheme={toggleTheme} />
+      {/* Main content layout below header */}
+      <div className="flex flex-1 overflow-hidden">
+        <LeftSidebar mode={mode} setMode={setMode} budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} open={leftOpen} onClose={() => setLeftOpen(false)} theme={theme} toggleTheme={toggleTheme} />
 
-      {/* Center workspace */}
-      <main className="flex flex-1 flex-col overflow-hidden pt-14 md:pt-0">
-        <div className="flex flex-1 flex-col overflow-hidden p-3 md:p-6">
-          <div className="relative flex flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl shadow-purple-950/50">
+        {/* Center workspace */}
+        <main className="flex flex-1 flex-col overflow-hidden">
+          <div className="flex flex-1 flex-col overflow-hidden p-3 md:p-6">
+            <div className="relative flex flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl shadow-purple-950/50">
 
-            <WorkspaceHeader mode={mode} language={language} setLanguage={setLanguage} theme={theme} toggleTheme={toggleTheme} onClearHistory={handleClearHistory} />
+              <WorkspaceHeader mode={mode} language={language} setLanguage={setLanguage} theme={theme} toggleTheme={toggleTheme} onClearHistory={handleClearHistory} />
 
-            {/* Chat thread */}
-            <div className="scroll-slim flex-1 space-y-5 overflow-y-auto px-4 pb-28 pt-5 md:px-6 md:pb-32 md:pt-6">
-              {messages.map((msg, i) => (
-                <div key={msg.id || i} className="space-y-4">
-                  {msg.sender === "ai" ? <AssistantBubble intents={msg.intents} latency={msg.latency}>{msg.text}</AssistantBubble> : <UserBubble>{msg.text}</UserBubble>}
-                  
-                  {msg.products && msg.products.length > 0 && (
-                    <motion.div initial="hidden" animate="show" variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08 } } }} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                      {msg.products.map(p => <ProductCard key={p.id} product={p} onAdd={() => handleAddToCart(p)} />)}
-                    </motion.div>
-                  )}
-
-                  {/* High-contrast inline alert card or empty search state illustration */}
-                  {isNoMatchesOrError(msg) && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className={`overflow-hidden rounded-2xl border p-6 text-center shadow-md max-w-[85%] mr-auto ${
-                        msg.isError
-                          ? "border-rose-500/30 bg-rose-500/5 text-foreground"
-                          : "border-border bg-surface text-foreground"
-                      }`}
-                    >
-                      {msg.isError ? (
-                        <div className="flex flex-col items-center gap-3">
-                          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-rose-500/20 text-rose-500 animate-pulse">
-                            <AlertCircle className="h-6 w-6" />
-                          </div>
-                          <div>
-                            <h4 className="text-base font-extrabold tracking-tight text-rose-500 uppercase">
-                              Service Error
-                            </h4>
-                            <p className="mt-1.5 text-sm font-medium leading-relaxed text-muted-foreground">
-                              The Kapruka Ruki AI service encountered an error or the streaming backend is currently offline. 
-                              Under no circumstances will we show fallback cached/mock items. Please verify your connection or try again.
-                            </p>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center">
-                          <EmptyStateIllustration theme={theme} />
-                          <h4 className="text-base font-extrabold tracking-tight text-primary uppercase select-none">
-                            No matching products found
-                          </h4>
-                          <p className="mt-2 max-w-md text-xs font-semibold leading-relaxed text-muted-foreground">
-                            Ruki AI searched the live Kapruka catalog but found no matching items for your search. 
-                            We have completely disabled fallback mock products to guarantee you only see real-time availability.
-                          </p>
-                          <button
-                            onClick={() => setMessageInput("Show me general popular gift items")}
-                            className="mt-4 rounded-xl border border-border bg-muted/50 px-4 py-2 text-xs font-bold transition-all duration-300 hover:bg-muted cursor-pointer"
-                          >
-                            Try another query
-                          </button>
-                        </div>
+              {/* Chat thread */}
+              <div className="scroll-slim flex-1 space-y-5 overflow-y-auto px-4 pb-28 pt-5 md:px-6 md:pb-32 md:pt-6">
+                {messages.map((msg, i) => (
+                  <div key={msg.id || i} className="space-y-4">
+                    {msg.sender === "ai" ? <AssistantBubble intents={msg.intents} latency={msg.latency}>{msg.text}</AssistantBubble> : <UserBubble>{msg.text}</UserBubble>}
+                    
+                    {msg.products && msg.products.length > 0 && (
+                      <motion.div initial="hidden" animate="show" variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08 } } }} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                        {msg.products.map(p => <ProductCard key={p.id} product={p} onAdd={() => handleAddToCart(p)} />
                       )}
+                      </motion.div>
+                    )}
+
+                    {/* High-contrast inline alert card or empty search state illustration */}
+                    {isNoMatchesOrError(msg) && (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className={`overflow-hidden rounded-2xl border p-6 text-center shadow-md max-w-[85%] mr-auto ${
+                          msg.isError
+                            ? "border-rose-500/30 bg-rose-500/5 text-foreground"
+                            : "border-border bg-surface text-foreground"
+                        }`}
+                      >
+                        {msg.isError ? (
+                          <div className="flex flex-col items-center gap-3">
+                            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-rose-500/20 text-rose-500 animate-pulse">
+                              <AlertCircle className="h-6 w-6" />
+                            </div>
+                            <div>
+                              <h4 className="text-base font-extrabold tracking-tight text-rose-500 uppercase">
+                                Service Error
+                              </h4>
+                              <p className="mt-1.5 text-sm font-medium leading-relaxed text-muted-foreground">
+                                The Kapruka Ruki AI service encountered an error or the streaming backend is currently offline. 
+                                Under no circumstances will we show fallback cached/mock items. Please verify your connection or try again.
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center">
+                            <EmptyStateIllustration theme={theme} />
+                            <h4 className="text-base font-extrabold tracking-tight text-primary uppercase select-none">
+                              No matching products found
+                            </h4>
+                            <p className="mt-2 max-w-md text-xs font-semibold leading-relaxed text-muted-foreground">
+                              Ruki AI searched the live Kapruka catalog but found no matching items for your search. 
+                              We have completely disabled fallback mock products to guarantee you only see real-time availability.
+                            </p>
+                            <button
+                              onClick={() => setMessageInput("Show me general popular gift items")}
+                              className="mt-4 rounded-xl border border-border bg-muted/50 px-4 py-2 text-xs font-bold transition-all duration-300 hover:bg-muted cursor-pointer"
+                            >
+                              Try another query
+                            </button>
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
+                  </div>
+                ))}
+
+                {streamedText && <AssistantBubble>{streamedText}</AssistantBubble>}
+
+                {messages.length <= 1 && !isTyping && (
+                  <ShoppingContextCard budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} onContextUpdated={(type, val) => setMessages(prev => [...prev, { id: `sys-${Date.now()}`, sender: "ai", text: `Context updated: ${type.toUpperCase()} set to "${val}".` }])} theme={theme} />
+                )}
+
+                <AnimatePresence mode="wait">
+                  {(isTyping || currentStatus) && (
+                    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.2 }} className="flex items-center gap-3 bg-muted border border-border px-4 py-2.5 rounded-full shadow-sm w-fit select-none">
+                      <div className="flex space-x-1.5">
+                        {[0, 150, 300].map(d => <span key={d} className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: `${d}ms` }} />)}
+                      </div>
+                      {currentStatus && <span className="text-xs font-semibold text-muted-foreground">{currentStatus}</span>}
                     </motion.div>
                   )}
-                </div>
-              ))}
+                </AnimatePresence>
 
-              {streamedText && <AssistantBubble>{streamedText}</AssistantBubble>}
+                <div ref={chatEndRef} />
+              </div>
 
-              {messages.length <= 1 && !isTyping && (
-                <ShoppingContextCard budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} onContextUpdated={(type, val) => setMessages(prev => [...prev, { id: `sys-${Date.now()}`, sender: "ai", text: `Context updated: ${type.toUpperCase()} set to "${val}".` }])} theme={theme} />
-              )}
-
-              <AnimatePresence mode="wait">
-                {(isTyping || currentStatus) && (
-                  <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.2 }} className="flex items-center gap-3 bg-muted border border-border px-4 py-2.5 rounded-full shadow-sm w-fit select-none">
-                    <div className="flex space-x-1.5">
-                      {[0, 150, 300].map(d => <span key={d} className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: `${d}ms` }} />)}
-                    </div>
-                    {currentStatus && <span className="text-xs font-semibold text-muted-foreground">{currentStatus}</span>}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              <div ref={chatEndRef} />
+              <ChatInputCapsule messageInput={messageInput} setMessageInput={setMessageInput} isMicActive={isMicActive} setIsMicActive={setIsMicActive} isCameraActive={isCameraActive} setIsCameraActive={setIsCameraActive} isAudioActive={isAudioActive} setIsAudioActive={setIsAudioActive} onSend={handleSendMessage} />
             </div>
-
-            <ChatInputCapsule messageInput={messageInput} setMessageInput={setMessageInput} isMicActive={isMicActive} setIsMicActive={setIsMicActive} isCameraActive={isCameraActive} setIsCameraActive={setIsCameraActive} isAudioActive={isAudioActive} setIsAudioActive={setIsAudioActive} onSend={handleSendMessage} />
           </div>
-        </div>
-      </main>
+        </main>
 
-      <RightCart cart={cart} subtotal={subtotal} delivery={delivery} total={total} updateQuantity={updateQuantity} handleCreateOrderLink={handleCreateOrderLink} open={rightOpen} onClose={() => setRightOpen(false)} isOrderLoading={isOrderLoading} />
+        <RightCart cart={cart} subtotal={subtotal} delivery={delivery} total={total} updateQuantity={updateQuantity} handleCreateOrderLink={handleCreateOrderLink} open={rightOpen} onClose={() => setRightOpen(false)} isOrderLoading={isOrderLoading} />
+      </div>
 
       {(leftOpen || rightOpen) && <div onClick={() => { setLeftOpen(false); setRightOpen(false); }} className="fixed inset-0 z-30 bg-black/40 backdrop-blur-xs md:hidden" />}
 
