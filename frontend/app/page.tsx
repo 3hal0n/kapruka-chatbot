@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, ShoppingCart, Sun, Moon, AlertCircle } from "lucide-react";
+import { Menu, ShoppingCart, Sun, Moon, AlertCircle, Trash2 } from "lucide-react";
 
 import { LeftSidebar, Mode } from "@/components/LeftSidebar";
 import { RightCart, CartItem } from "@/components/RightCart";
@@ -10,7 +10,6 @@ import { AssistantBubble } from "@/components/AssistantBubble";
 import { UserBubble } from "@/components/UserBubble";
 import { ShoppingContextCard } from "@/components/ShoppingContextCard";
 import { ProductCard, Product } from "@/components/ProductCard";
-import { WorkspaceHeader } from "@/components/WorkspaceHeader";
 import { ChatInputCapsule } from "@/components/ChatInputCapsule";
 import { OrderModal, CheckoutSuccessModal } from "@/components/OrderModals";
 
@@ -257,6 +256,15 @@ export default function RukiPage() {
           <img src="/ruki.png" alt="Kapruka Logo" className="h-10 w-auto object-contain select-none" />
         </div>
         <div className="flex items-center gap-1">
+          <button
+            id="clear-history-btn"
+            onClick={handleClearHistory}
+            className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer"
+            aria-label="Clear history"
+            title="Clear history"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
           <button id="theme-toggle-btn-header" onClick={toggleTheme} className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer" aria-label="Toggle theme">
             {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
           </button>
@@ -274,12 +282,10 @@ export default function RukiPage() {
         {/* Center workspace */}
         <main className="flex flex-1 flex-col overflow-hidden">
           <div className="flex flex-1 flex-col overflow-hidden p-3 md:p-6">
-            <div className="relative flex flex-1 flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl shadow-purple-950/50">
-
-              <WorkspaceHeader mode={mode} language={language} setLanguage={setLanguage} theme={theme} toggleTheme={toggleTheme} onClearHistory={handleClearHistory} />
+            <div className="relative flex flex-col h-full overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl shadow-purple-950/50">
 
               {/* Chat thread */}
-              <div className="scroll-slim flex-1 space-y-5 overflow-y-auto px-4 pb-28 pt-5 md:px-6 md:pb-32 md:pt-6">
+              <div className="scroll-slim flex-1 overflow-y-auto h-full space-y-5 px-4 pb-24 pt-6 md:px-6 md:pb-24 md:pt-6">
                 {messages.map((msg, i) => (
                   <div key={msg.id || i} className="space-y-4">
                     {msg.sender === "ai" ? <AssistantBubble intents={msg.intents} latency={msg.latency}>{msg.text}</AssistantBubble> : <UserBubble>{msg.text}</UserBubble>}

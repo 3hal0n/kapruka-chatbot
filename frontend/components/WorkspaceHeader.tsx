@@ -22,7 +22,7 @@ export function WorkspaceHeader({
   onClearHistory,
 }: WorkspaceHeaderProps) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-white/10 bg-[#3c1b63] px-4 py-3 sm:flex sm:flex-wrap sm:justify-between md:px-6 md:py-4 select-none rounded-t-2xl text-white">
+    <div className="h-16 shrink-0 flex items-center justify-between border-b border-white/10 bg-[#3c1b63] px-4 md:px-6 select-none rounded-t-2xl text-white">
       <h2 className="truncate text-lg font-extrabold tracking-tight md:text-xl text-white">{mode}</h2>
       <div className="flex items-center gap-2">
         <div className="relative">
