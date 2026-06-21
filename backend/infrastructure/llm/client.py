@@ -90,6 +90,7 @@ def chat(
             model=model,
             contents=contents,
             config=config,
+            http_options=types.HttpOptions(timeout=8.0)
         )
         return response.text.strip()
 
@@ -127,6 +128,7 @@ def chat_stream(
             model=model,
             contents=contents,
             config=config,
+            http_options=types.HttpOptions(timeout=8.0)
         ):
             if chunk.text:
                 yield chunk.text

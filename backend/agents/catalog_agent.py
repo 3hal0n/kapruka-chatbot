@@ -2,6 +2,8 @@
 
 import json
 import asyncio
+import re
+from typing import Any
 from agents import critic_agent
 from utils.config import CLAUDE_MODEL, CLAUDE_MAX_TOKENS_RESPOND, MAX_REFLECTION_ROUNDS, CATALOG_SEARCH_TOP_K
 from utils.prompts import CATALOG_SYSTEM_PROMPT, REVISE_SYSTEM_PROMPT
@@ -65,6 +67,22 @@ async def to_async_gen(sync_gen_fn, *args, **kwargs):
         yield chunk
 
 
+def parse_product_price(price_val: Any) -> float:
+    """Parse float product price from int, float, dict, or currency string structures."""
+    if isinstance(price_val, (int, float)):
+        return float(price_val)
+    if isinstance(price_val, dict):
+        amt = price_val.get("amount") or price_val.get("price") or 0
+        return parse_product_price(amt)
+    if isinstance(price_val, str):
+        clean = re.sub(r'[^\d.]', '', price_val)
+        try:
+            return float(clean) if clean else 0.0
+        except ValueError:
+            pass
+    return 0.0
+
+
 def filter_allergens(products: list, recipient_allergies: set) -> list:
     """Filter out products that match recipient allergies in name, specs, or category."""
     filtered = []
@@ -90,7 +108,7 @@ def filter_allergens(products: list, recipient_allergies: set) -> list:
     return filtered
 
 
-async def run_stream(recipients: set, search_query: str, old_profile: dict, new_profile: dict, query_vector: list = None):
+async def run_stream(recipients: set, search_query: str, old_profile: dict, new_profile: dict, query_vector: list = None, budget_limit: float = None):
     from infrastructure.mcp.client import kapruka_search_products
     import asyncio
 
@@ -112,6 +130,16 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
     else:
         products = [p for p in products if isinstance(p, dict)]
 
+    # Filter products by price if budget limit is provided
+    if budget_limit is not None:
+        filtered_by_price = []
+        for p in products:
+            price_val = p.get("price")
+            product_price = parse_product_price(price_val)
+            if product_price <= budget_limit:
+                filtered_by_price.append(p)
+        products = filtered_by_price
+
     # Fallback to broader queries if results are empty or very low (less than 3 items)
     if len(products) < 3:
         fallback_queries = []
@@ -132,6 +160,8 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
                     
                     if fb_products:
                         fb_products = [p for p in fb_products if isinstance(p, dict)]
+                        if budget_limit is not None:
+                            fb_products = [p for p in fb_products if parse_product_price(p.get("price")) <= budget_limit]
                         products.extend(fb_products)
                         # Remove duplicates based on product ID
                         seen = set()

@@ -26,6 +26,21 @@ logger = logging.getLogger("kapruka-fastapi")
 router_sessions: Dict[str, Router] = {}
 
 
+import re
+
+def parse_budget_limit(msg: str) -> Optional[float]:
+    """Parse numeric budget limit from user message (e.g. under 5000, less than 5,000)."""
+    pattern = r'(?:under|below|less\s+than|budget\s+of|budget|max|maximum|up\s+to)\s*(?:rs\.?|lkr)?\s*([\d,]+)'
+    match = re.search(pattern, msg, re.IGNORECASE)
+    if match:
+        num_str = match.group(1).replace(",", "")
+        try:
+            return float(num_str)
+        except ValueError:
+            pass
+    return None
+
+
 def get_router(user_id: str) -> Router:
     """Retrieve or initialize the Router instance for a given user_id."""
     clean_id = user_id.strip()
@@ -122,10 +137,18 @@ async def chat_endpoint(request: ChatRequest):
 
     router = get_router(request.user_id)
 
+    # Extract budget limit
+    budget_limit = parse_budget_limit(request.message)
+    if budget_limit is None and request.budget:
+        budget_limit = parse_budget_limit(request.budget)
+        
+    if budget_limit is not None:
+        logger.info(f"Detected budget limit: Rs. {budget_limit}")
+
     async def sse_generator():
         start_time = time.time()
         try:
-            async for chunk in router.route_stream(request.message, request.recipient_context):
+            async for chunk in router.route_stream(request.message, request.recipient_context, budget_limit=budget_limit):
                 # 1. Classification event
                 if isinstance(chunk, str) and chunk.startswith("<<CLASSIFICATION>>:"):
                     try:

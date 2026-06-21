@@ -89,7 +89,7 @@ class Router:
                 "contact_number": None
             }
 
-    async def route_stream(self, user_message: str, recipient_context: dict | None = None):
+    async def route_stream(self, user_message: str, recipient_context: dict | None = None, budget_limit: float | None = None):
         """Streaming version of route() — yields chunks for SEARCH responses."""
         import asyncio
 
@@ -271,7 +271,8 @@ class Router:
                 search_query=classification.get("search_query") or user_message,
                 old_profile=old_profile,
                 new_profile=new_profile,
-                query_vector=query_vector
+                query_vector=query_vector,
+                budget_limit=budget_limit
             ):
                 if chunk != "<<CLEAR>>":
                     full_response_chunks.append(chunk)
