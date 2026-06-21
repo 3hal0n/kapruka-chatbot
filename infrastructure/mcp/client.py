@@ -12,7 +12,8 @@ from typing import Dict, Any, Optional, List
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from mcp import ClientSession
-from mcp.client.sse import sse_client
+from mcp.shared.message import SessionMessage
+import mcp.types as types
 
 logger = logging.getLogger("kapruka-mcp-client")
 
@@ -61,10 +62,113 @@ class RateLimitedAsyncClient(httpx.AsyncClient):
         return response
 
 
+import anyio
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+from typing import AsyncGenerator, Tuple
+
+@asynccontextmanager
+async def custom_sse_client(
+    url: str,
+    session_id: str,
+    http_client: RateLimitedAsyncClient
+) -> AsyncGenerator[Tuple[MemoryObjectReceiveStream[SessionMessage | Exception], MemoryObjectSendStream[SessionMessage]], None]:
+    """
+    Custom SSE Transport client designed for the Kapruka MCP server.
+    Bypasses waiting for standard 'endpoint' event and handles JSON-RPC messages 
+    delivered in both SSE stream events and POST response payloads.
+    """
+    read_stream_writer, read_stream = anyio.create_memory_object_stream(0)
+    write_stream, write_stream_reader = anyio.create_memory_object_stream(0)
+
+    async def process_sse_data(sse_data: str):
+        try:
+            message = types.JSONRPCMessage.model_validate_json(sse_data)
+            logger.debug(f"Parsed JSON-RPC message: {message}")
+            session_message = SessionMessage(message)
+            await read_stream_writer.send(session_message)
+        except Exception as e:
+            logger.warning(f"Error parsing JSON-RPC message: {e} | data: {sse_data}")
+
+    async def sse_reader():
+        logger.info("Starting custom SSE reader stream...")
+        try:
+            async with http_client.stream("GET", url, timeout=httpx.Timeout(5.0, read=300.0)) as r:
+                logger.info(f"SSE stream response status: {r.status_code}")
+                current_event = None
+                async for line in r.iter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    logger.debug(f"SSE line: {line}")
+                    if line.startswith("event:"):
+                        current_event = line[len("event:"):].strip()
+                    elif line.startswith("data:"):
+                        data_val = line[len("data:"):].strip()
+                        if current_event == "message" or not current_event:
+                            await process_sse_data(data_val)
+                    elif line.startswith(":"):
+                        # Keep-alive ping
+                        logger.debug(f"Keep-alive ping: {line}")
+        except Exception as e:
+            logger.error(f"SSE reader exception: {e}")
+            if not read_stream_writer.extra_attributes:
+                try:
+                    await read_stream_writer.send(e)
+                except Exception:
+                    pass
+        finally:
+            await read_stream_writer.aclose()
+
+    async def post_writer():
+        logger.info("Starting custom POST writer...")
+        try:
+            async with write_stream_reader:
+                async for session_message in write_stream_reader:
+                    payload = session_message.message.model_dump(
+                        by_alias=True,
+                        mode="json",
+                        exclude_none=True
+                    )
+                    logger.debug(f"Sending client message via POST: {payload}")
+                    
+                    post_headers = {
+                        "Content-Type": "application/json",
+                        "Accept": "application/json, text/event-stream"
+                    }
+                    
+                    resp = await http_client.post(url, json=payload, headers=post_headers)
+                    logger.debug(f"POST response status: {resp.status_code}")
+                    
+                    body = resp.text.strip()
+                    if "data:" in body:
+                        # Extract data line(s) from standard event-stream POST response
+                        for line in body.split("\n"):
+                            line = line.strip()
+                            if line.startswith("data:"):
+                                data_val = line[len("data:"):].strip()
+                                await process_sse_data(data_val)
+                    elif body.startswith("{"):
+                        # Direct JSON response payload
+                        await process_sse_data(body)
+        except Exception as e:
+            logger.exception("Error in post_writer")
+        finally:
+            await write_stream.aclose()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(sse_reader)
+        tg.start_soon(post_writer)
+        
+        try:
+            yield read_stream, write_stream
+        finally:
+            tg.cancel_scope.cancel()
+
+
 class KaprukaMCPClient:
     """
     Async Context Manager to establish and maintain an SSE connection session
-    with the Kapruka remote MCP server.
+    with the Kapruka remote MCP server using our custom transport.
     """
     def __init__(self, sse_url: str = "https://mcp.kapruka.com/mcp"):
         self.sse_url = sse_url
@@ -86,25 +190,20 @@ class KaprukaMCPClient:
                     raise RuntimeError("Server did not return an 'mcp-session-id' header.")
                 logger.info(f"Handshake successful. Session ID generated: {session_id}")
 
-            # Step 2: Custom client factory to inject RateLimitedAsyncClient and set headers
-            @asynccontextmanager
-            async def client_factory(headers=None, auth=None, timeout=None):
-                if headers is None:
-                    headers = {}
-                headers["mcp-session-id"] = session_id
-                
-                client = RateLimitedAsyncClient(headers=headers, auth=auth, timeout=timeout)
-                self.http_client = client
-                async with client:
-                    yield client
+            # Step 2: Initialize our custom RateLimitedAsyncClient
+            headers = {
+                "Accept": "application/json, text/event-stream",
+                "mcp-session-id": session_id
+            }
+            self.http_client = RateLimitedAsyncClient(headers=headers, timeout=30.0)
+            await self._exit_stack.enter_async_context(self.http_client)
             
-            # Connect using sse_client with our custom factory and headers
-            connection_headers = {"mcp-session-id": session_id}
+            # Step 3: Connect using custom_sse_client
             read, write = await self._exit_stack.enter_async_context(
-                sse_client(
+                custom_sse_client(
                     url=self.sse_url,
-                    headers=connection_headers,
-                    httpx_client_factory=client_factory
+                    session_id=session_id,
+                    http_client=self.http_client
                 )
             )
             
@@ -231,31 +330,76 @@ async def _execute_mcp_tool(tool_name: str, arguments: dict) -> Any:
 
 async def kapruka_search_products(query: str, limit: Optional[int] = None) -> dict:
     """Search Kapruka product catalog."""
-    args = {"query": query}
+    params = {"q": query, "response_format": "json"}
     if limit is not None:
-        args["limit"] = limit
-    return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_search_products", args)
+        params["limit"] = limit
+    args = {"params": params}
+    res = await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_search_products", args)
+    if isinstance(res, dict) and "results" in res:
+        # Map fields for catalog_agent compatibility
+        mapped_products = []
+        for p in res["results"]:
+            cat_val = p.get("category")
+            if isinstance(cat_val, dict):
+                cat_name = cat_val.get("name") or ""
+            else:
+                cat_name = str(cat_val or "")
+                
+            mapped_p = {
+                **p,
+                "specs": p.get("summary") or "",
+                "availability": "In Stock" if p.get("in_stock") else "Out of Stock",
+                "stock": "In Stock" if p.get("in_stock") else "Out of Stock",
+                "category": cat_name,
+                "checkout_ready": p.get("in_stock", True)
+            }
+            mapped_products.append(mapped_p)
+        return {"products": mapped_products, "result": mapped_products}
+    return res
 
 
 async def kapruka_get_product(product_id: str) -> dict:
     """Retrieve detailed product specifications."""
-    args = {"product_id": product_id}
-    return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_get_product", args)
+    params = {"product_id": product_id, "response_format": "json"}
+    args = {"params": params}
+    res = await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_get_product", args)
+    if isinstance(res, dict):
+        cat_val = res.get("category")
+        if isinstance(cat_val, dict):
+            cat_name = cat_val.get("name") or ""
+        else:
+            cat_name = str(cat_val or "")
+        res["specs"] = res.get("description") or ""
+        res["availability"] = "In Stock" if res.get("in_stock") else "Out of Stock"
+        res["stock"] = "In Stock" if res.get("in_stock") else "Out of Stock"
+        res["category"] = cat_name
+        res["checkout_ready"] = res.get("in_stock", True)
+    return res
 
 
 async def kapruka_list_categories() -> dict:
     """List all categories in Kapruka catalog."""
-    return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_list_categories", {})
+    args = {"params": {"depth": 2, "response_format": "json"}}
+    return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_list_categories", args)
 
 
-async def kapruka_list_delivery_cities() -> dict:
+async def kapruka_list_delivery_cities(query: Optional[str] = None) -> dict:
     """List all supported delivery locations/cities in Sri Lanka."""
-    return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_list_delivery_cities", {})
+    params = {"limit": 50, "response_format": "json"}
+    if query:
+        params["query"] = query
+    args = {"params": params}
+    res = await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_list_delivery_cities", args)
+    if isinstance(res, dict) and "cities" in res:
+        # Convert list of dicts to list of strings for logistics_agent compatibility
+        city_names = [c.get("name") for c in res["cities"] if c.get("name")]
+        return {"cities": city_names, "result": city_names}
+    return res
 
 
 async def kapruka_check_delivery(city: str) -> dict:
     """Check delivery availability and timing tier for a location."""
-    args = {"city": city}
+    args = {"params": {"city": city, "response_format": "json"}}
     return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_check_delivery", args)
 
 
@@ -267,17 +411,54 @@ async def kapruka_create_order(
     contact_number: str
 ) -> dict:
     """Place a new gift order on Kapruka."""
-    args = {
-        "product_id": product_id,
-        "quantity": quantity,
-        "recipient_name": recipient_name,
-        "delivery_address": delivery_address,
-        "contact_number": contact_number
+    import datetime
+    
+    # Try to extract city from delivery_address
+    city = "Colombo 03"  # default
+    addr_clean = delivery_address.lower()
+    for possible_city in ["colombo", "kandy", "galle", "jaffna", "negombo", "gampaha", "kotte", "dehiwala", "moratuwa", "nugegoda"]:
+        if possible_city in addr_clean:
+            if possible_city == "colombo":
+                city = "Colombo 03"
+            elif possible_city == "kandy":
+                city = "Kandy"
+            elif possible_city == "galle":
+                city = "Galle"
+            elif possible_city == "jaffna":
+                city = "Jaffna"
+            else:
+                city = possible_city.title()
+            break
+            
+    tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+    
+    params = {
+        "cart": [
+            {
+                "product_id": product_id,
+                "quantity": quantity
+            }
+        ],
+        "recipient": {
+            "name": recipient_name,
+            "phone": contact_number
+        },
+        "delivery": {
+            "address": delivery_address,
+            "city": city,
+            "date": tomorrow
+        },
+        "sender": {
+            "name": "Guest"
+        },
+        "response_format": "json"
     }
+    
+    args = {"params": params}
     return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_create_order", args)
 
 
 async def kapruka_track_order(order_id: str) -> dict:
     """Track real-time shipment status of a Kapruka order."""
-    args = {"order_id": order_id}
+    args = {"params": {"order_number": order_id, "response_format": "json"}}
     return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_track_order", args)

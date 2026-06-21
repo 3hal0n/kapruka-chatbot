@@ -1,7 +1,6 @@
-"""
-main.py — Kapruka Gift Concierge
-Asynchronous FastAPI Application
-"""
+import os
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
 import json
 import logging
@@ -40,17 +39,10 @@ def get_router(user_id: str) -> Router:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Warmup database client, embedding model and MCP client
+    # Warmup MCP client
     logger.info("Starting lifespan warmup...")
     try:
-        from infrastructure.db.qdrant_store import get_client
-        from memory.lt_memory import encoder
         from infrastructure.mcp.client import kapruka_mcp
-        
-        # Warmup qdrant connection
-        get_client()
-        # Warmup embedding model
-        encoder.encode("warmup", show_progress_bar=False)
         
         # Initialize Kapruka MCP Client
         await kapruka_mcp.start()

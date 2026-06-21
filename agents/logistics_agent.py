@@ -37,7 +37,7 @@ async def run(location: str | None, deadline: str | None = None, tracking_code: 
 
     # 2. Retrieve live delivery cities
     try:
-        cities_res = await kapruka_list_delivery_cities()
+        cities_res = await kapruka_list_delivery_cities(location)
         if isinstance(cities_res, dict):
             cities = cities_res.get("cities") or cities_res.get("result") or []
         else:
