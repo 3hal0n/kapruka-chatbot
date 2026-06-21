@@ -7,7 +7,8 @@ import {
   ShoppingCart, 
   Minus, 
   Plus, 
-  PackageOpen 
+  PackageOpen,
+  Loader2
 } from "lucide-react";
 
 export interface CartItem {
@@ -27,6 +28,7 @@ interface RightCartProps {
   handleCreateOrderLink: () => void;
   open: boolean;
   onClose: () => void;
+  isOrderLoading?: boolean;
 }
 
 export function RightCart({
@@ -38,6 +40,7 @@ export function RightCart({
   handleCreateOrderLink,
   open,
   onClose,
+  isOrderLoading = false,
 }: RightCartProps) {
   const content = (
     <div className="flex h-full w-[320px] shrink-0 flex-col gap-4 overflow-hidden border-l border-border bg-background p-4">
@@ -145,11 +148,15 @@ export function RightCart({
         <button
           id="create-order-link-btn"
           onClick={handleCreateOrderLink}
-          disabled={cart.length === 0}
-          className="mt-4 w-full rounded-xl py-3 text-sm font-black shadow-sm transition-all duration-300 ease-in-out hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.5)] active:scale-[0.98] disabled:opacity-60 cursor-pointer"
+          disabled={cart.length === 0 || isOrderLoading}
+          className="mt-4 w-full rounded-xl py-3 text-sm font-black shadow-sm transition-all duration-300 ease-in-out hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.5)] active:scale-[0.98] disabled:opacity-60 cursor-pointer inline-flex items-center justify-center gap-2"
           style={{ backgroundColor: "#FFD700", color: "#0B0410" }}
         >
-          Create Order Link
+          {isOrderLoading ? (
+            <><Loader2 className="h-4 w-4 animate-spin" /> Placing Order...</>
+          ) : (
+            "Create Order Link"
+          )}
         </button>
       </div>
     </div>

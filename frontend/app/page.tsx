@@ -20,7 +20,8 @@ import {
   X,
   ExternalLink,
   Sun,
-  Moon
+  Moon,
+  Loader2
 } from "lucide-react";
 
 import { LeftSidebar, Mode } from "@/components/LeftSidebar";
@@ -79,6 +80,9 @@ const MOCK_PRODUCTS: Product[] = [
   }
 ];
 
+// Stable unique session ID — persists for the browser tab lifetime
+const generateUserId = () => `ruki_${Math.random().toString(36).substring(2, 10)}`;
+
 export default function RukiPage() {
   // Navigation & Drawer States
   const [mode, setMode] = useState<Mode>("Smart Shopping");
@@ -114,6 +118,10 @@ export default function RukiPage() {
     setTheme(prev => (prev === "light" ? "dark" : "light"));
   };
 
+  // Stable user session ID (persists across messages in the same tab)
+  const userIdRef = useRef<string>("");
+  if (!userIdRef.current) userIdRef.current = generateUserId();
+
   // Conversational Workspace Chat States
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
@@ -123,8 +131,17 @@ export default function RukiPage() {
 
   // Dynamic Cart States
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [deliveryFee, setDeliveryFee] = useState(350);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
+
+  // Pre-checkout order form states
+  const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
+  const [orderRecipientName, setOrderRecipientName] = useState("");
+  const [orderAddress, setOrderAddress] = useState("");
+  const [orderPhone, setOrderPhone] = useState("");
+  const [isOrderLoading, setIsOrderLoading] = useState(false);
+  const [orderError, setOrderError] = useState<string | null>(null);
 
   // Chat bottom scroll anchor
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -165,7 +182,7 @@ export default function RukiPage() {
     ]);
   };
 
-  // Add Product to Cart
+  // Add Product to Cart — also fetches live delivery fee on first add
   const handleAddToCart = (product: Product) => {
     const rawPrice = product.price;
     const finalPrice = typeof rawPrice === "object" ? rawPrice.amount : Number(rawPrice);
@@ -177,6 +194,13 @@ export default function RukiPage() {
         return prev.map(item =>
           item.id === code ? { ...item, quantity: item.quantity + 1 } : item
         );
+      }
+      // First item added — fetch live delivery fee
+      if (prev.length === 0) {
+        fetch(`${BACKEND_URL}/api/delivery?city=Colombo`)
+          .then(r => r.json())
+          .then(data => { if (data.fee) setDeliveryFee(data.fee); })
+          .catch(() => {}); // fallback stays 350
       }
       return [
         ...prev,
@@ -207,16 +231,53 @@ export default function RukiPage() {
 
   // Cart Subtotals
   const subtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const delivery = cart.length > 0 ? 350 : 0;
+  const delivery = cart.length > 0 ? deliveryFee : 0;
   const total = subtotal + delivery;
 
-  // Create Guest checkout link
+  // Open pre-checkout modal (replaces mock URL generator)
   const handleCreateOrderLink = () => {
     if (cart.length === 0) return;
-    const randomRef = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const mockLink = `https://www.kapruka.com/checkout/guest?order_ref=RUKI-${randomRef}&items=${cart.length}`;
-    setCheckoutUrl(mockLink);
-    setIsCheckoutModalOpen(true);
+    setOrderError(null);
+    setIsOrderModalOpen(true);
+  };
+
+  // Submit order to /api/order → open live checkout URL
+  const handleSubmitOrder = async () => {
+    if (!orderRecipientName.trim() || !orderAddress.trim() || !orderPhone.trim()) {
+      setOrderError("Please fill in all fields before placing the order.");
+      return;
+    }
+    setIsOrderLoading(true);
+    setOrderError(null);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/order`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userIdRef.current,
+          cart: cart.map(item => ({
+            id: item.id,
+            name: item.name,
+            price: item.price,
+            quantity: item.quantity,
+            image_url: item.image_url,
+          })),
+          recipient_name: orderRecipientName,
+          delivery_address: orderAddress,
+          contact_number: orderPhone,
+        })
+      });
+      const data = await res.json();
+      const url = data.checkout_url || `https://www.kapruka.com/checkout/guest?order_ref=${data.order_id}`;
+      setCheckoutUrl(url);
+      setIsOrderModalOpen(false);
+      setIsCheckoutModalOpen(true);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      setOrderError("Could not connect to the server. Please try again.");
+    } finally {
+      setIsOrderLoading(false);
+    }
   };
 
   // Clear Conversational Memory
@@ -263,7 +324,7 @@ export default function RukiPage() {
     };
     setMessages(prev => [...prev, userMsgObj]);
 
-    // Build context parameters
+    // Build enriched context parameters
     const activeContext: Record<string, any> = {};
     const recipientKey = recipient.toLowerCase() || "default";
     activeContext[recipientKey] = {
@@ -277,9 +338,12 @@ export default function RukiPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: "ruki_customer",
+          user_id: userIdRef.current,
           message: userText,
-          recipient_context: activeContext
+          recipient_context: activeContext,
+          budget: budget || undefined,
+          recipient: recipient || undefined,
+          occasion: occasion || undefined,
         })
       });
 
@@ -642,6 +706,7 @@ export default function RukiPage() {
         handleCreateOrderLink={handleCreateOrderLink}
         open={rightOpen}
         onClose={() => setRightOpen(false)}
+        isOrderLoading={isOrderLoading}
       />
 
       {/* Backdrop for open drawer layout on mobile */}
@@ -652,7 +717,120 @@ export default function RukiPage() {
         />
       )}
 
-      {/* Checkout Order link popup modal */}
+      {/* Pre-checkout Order Details Modal */}
+      <AnimatePresence>
+        {isOrderModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="w-full max-w-md bg-surface rounded-2xl shadow-2xl overflow-hidden border border-border"
+            >
+              {/* Modal Header */}
+              <div className="bg-primary text-primary-foreground p-5 flex items-center justify-between">
+                <div className="flex items-center gap-2 select-none">
+                  <ShoppingCart className="h-5 w-5" />
+                  <span className="font-extrabold tracking-tight">Delivery Details</span>
+                </div>
+                <button
+                  id="order-modal-close-btn"
+                  onClick={() => setIsOrderModalOpen(false)}
+                  className="p-1 rounded-lg hover:bg-white/10 text-white/80 hover:text-white cursor-pointer"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Fill in the recipient's details to create your order on Kapruka. A secure payment link will open instantly.
+                </p>
+
+                {/* Cart summary */}
+                <div className="rounded-xl bg-muted/60 border border-border p-3 space-y-1">
+                  {cart.map(item => (
+                    <div key={item.id} className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-foreground truncate max-w-[200px]">{item.name} ×{item.quantity}</span>
+                      <span className="font-bold text-primary shrink-0">Rs. {(item.price * item.quantity).toLocaleString()}</span>
+                    </div>
+                  ))}
+                  <div className="border-t border-border mt-2 pt-2 flex justify-between text-xs font-black">
+                    <span>Total</span>
+                    <span>Rs. {total.toLocaleString()}</span>
+                  </div>
+                </div>
+
+                {/* Form fields */}
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Recipient Name *</label>
+                    <input
+                      id="order-recipient-name"
+                      type="text"
+                      placeholder="e.g. Dilanka Perera"
+                      value={orderRecipientName}
+                      onChange={e => setOrderRecipientName(e.target.value)}
+                      className="w-full rounded-xl border border-border bg-muted/40 px-3 py-2.5 text-sm font-medium outline-none transition-all focus:ring-2 focus:ring-ring/40 text-foreground placeholder:text-muted-foreground/60"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Delivery Address *</label>
+                    <input
+                      id="order-delivery-address"
+                      type="text"
+                      placeholder="e.g. 45 Galle Road, Colombo 03"
+                      value={orderAddress}
+                      onChange={e => setOrderAddress(e.target.value)}
+                      className="w-full rounded-xl border border-border bg-muted/40 px-3 py-2.5 text-sm font-medium outline-none transition-all focus:ring-2 focus:ring-ring/40 text-foreground placeholder:text-muted-foreground/60"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1">Contact Number *</label>
+                    <input
+                      id="order-phone-number"
+                      type="tel"
+                      placeholder="e.g. 0771234567"
+                      value={orderPhone}
+                      onChange={e => setOrderPhone(e.target.value)}
+                      className="w-full rounded-xl border border-border bg-muted/40 px-3 py-2.5 text-sm font-medium outline-none transition-all focus:ring-2 focus:ring-ring/40 text-foreground placeholder:text-muted-foreground/60"
+                    />
+                  </div>
+                </div>
+
+                {orderError && (
+                  <p className="text-xs font-semibold text-red-500 bg-red-500/10 rounded-lg px-3 py-2">{orderError}</p>
+                )}
+
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <button
+                    id="order-cancel-btn"
+                    onClick={() => setIsOrderModalOpen(false)}
+                    className="w-full border border-border text-foreground py-3 rounded-xl text-xs font-bold hover:bg-muted transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    id="order-submit-btn"
+                    onClick={handleSubmitOrder}
+                    disabled={isOrderLoading}
+                    className="w-full rounded-xl py-3 text-xs font-black shadow-sm transition-all duration-300 ease-in-out hover:brightness-110 hover:shadow-[0_0_18px_rgba(255,215,0,0.4)] active:scale-[0.98] disabled:opacity-70 cursor-pointer inline-flex items-center justify-center gap-2"
+                    style={{ backgroundColor: "#FFD700", color: "#0B0410" }}
+                  >
+                    {isOrderLoading ? (
+                      <><Loader2 className="h-4 w-4 animate-spin" /> Placing Order...</>
+                    ) : (
+                      <>Place Order <ExternalLink className="h-3.5 w-3.5" /></>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Post-order success modal — shows checkout URL */}
       <AnimatePresence>
         {isCheckoutModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs">
@@ -665,9 +843,9 @@ export default function RukiPage() {
               <div className="bg-primary text-primary-foreground p-5 flex items-center justify-between">
                 <div className="flex items-center gap-2 select-none">
                   <Check className="h-5 w-5 text-emerald-400 stroke-[3px]" />
-                  <span className="font-extrabold tracking-tight">Order Link Created</span>
+                  <span className="font-extrabold tracking-tight">Order Created!</span>
                 </div>
-                <button 
+                <button
                   id="checkout-close-btn-top"
                   onClick={() => setIsCheckoutModalOpen(false)}
                   className="p-1 rounded-lg hover:bg-white/10 text-white/80 hover:text-white cursor-pointer"
@@ -678,7 +856,7 @@ export default function RukiPage() {
 
               <div className="p-6 space-y-4">
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  Your secure guest checkout link has been generated. Send this link to checkout instantly or share it with the recipient to complete checkout.
+                  Your Kapruka order link is ready. The checkout page has been opened in a new tab. Copy the link below to share or revisit.
                 </p>
 
                 <div className="bg-muted border border-border rounded-xl p-3 flex items-center justify-between gap-3">
@@ -692,9 +870,8 @@ export default function RukiPage() {
                     id="checkout-copy-btn"
                     onClick={() => {
                       if (checkoutUrl) navigator.clipboard.writeText(checkoutUrl);
-                      alert("Copied to clipboard!");
                     }}
-                    className="text-xs font-bold text-primary hover:underline cursor-pointer"
+                    className="text-xs font-bold text-primary hover:underline cursor-pointer shrink-0"
                   >
                     Copy
                   </button>
@@ -713,9 +890,10 @@ export default function RukiPage() {
                     href={checkoutUrl || "#"}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="w-full bg-amber hover:brightness-105 text-amber-foreground py-3 rounded-xl text-xs font-bold text-center flex items-center justify-center gap-1 shadow-sm transition-all cursor-pointer"
+                    className="w-full py-3 rounded-xl text-xs font-bold text-center flex items-center justify-center gap-1 shadow-sm transition-all cursor-pointer hover:brightness-110"
+                    style={{ backgroundColor: "#FFD700", color: "#0B0410" }}
                   >
-                    Launch Link
+                    Open Checkout
                     <ExternalLink className="h-3.5 w-3.5" />
                   </a>
                 </div>
