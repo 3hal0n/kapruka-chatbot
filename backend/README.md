@@ -149,11 +149,21 @@ Or run both in one command:
 make run
 ```
 
----
-
 ## Running the App
 
-### Streamlit UI (recommended)
+### FastAPI Server (Main Backend API)
+
+To run the live FastAPI streaming backend gateway which services the Next.js frontend:
+
+```bash
+python main.py
+```
+
+This starts the uvicorn server on `http://localhost:8000`. You can test the endpoints at `http://localhost:8000/docs`.
+
+### Streamlit UI (Alternative/Legacy UI)
+
+To run the standalone Streamlit interface:
 
 ```bash
 streamlit run app.py
@@ -166,10 +176,12 @@ Features:
 - Per-response latency chip
 - Session scoped to customer ID with reset button
 
-### CLI
+### CLI Pipeline Commands
+
+To manage crawling and embedding ingestion directly from the command line:
 
 ```bash
-python main.py
+python cli/pipeline.py [crawl|ingest|run|status]
 ```
 
 ---
