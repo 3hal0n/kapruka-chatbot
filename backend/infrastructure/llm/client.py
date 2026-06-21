@@ -20,7 +20,7 @@ load_dotenv()
 logger = logging.getLogger("kapruka-llm-client")
 
 # ── Default model ─────────────────────────────────────────────────────────────
-DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 
 def is_mock_mode() -> bool:
