@@ -68,8 +68,8 @@ export function LeftSidebar({
   const content = (
     <div className="flex h-full w-[260px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-background p-4 select-none">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl tracking-normal leading-none text-foreground select-none">
-          <span className="font-normal text-foreground/80">Kapruka</span> <span className="font-black text-primary">Ruki</span>
+        <h1 className="text-2xl tracking-tight leading-none select-none">
+          <span className="font-extrabold text-foreground">Kapruka</span> <span className="font-black" style={{ color: "#FFD700" }}>Ruki</span>
         </h1>
         <button 
           id="sidebar-close-btn-mobile"
@@ -82,16 +82,8 @@ export function LeftSidebar({
 
       {/* Modes Panel */}
       <div className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3">
           <h2 className="text-sm font-extrabold tracking-tight">Modes</h2>
-          <button
-            id="sidebar-theme-toggle-btn"
-            onClick={toggleTheme}
-            className="grid h-7 w-7 place-items-center rounded-lg bg-muted text-muted-foreground hover:text-foreground transition-all duration-300 ease-in-out cursor-pointer"
-            aria-label="Toggle theme"
-          >
-            {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-          </button>
         </div>
         <nav className="flex flex-col gap-1">
           {MODES.map(({ label, icon: Icon }) => {

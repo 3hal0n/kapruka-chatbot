@@ -146,10 +146,8 @@ export function RightCart({
           id="create-order-link-btn"
           onClick={handleCreateOrderLink}
           disabled={cart.length === 0}
-          className={
-            "mt-4 w-full rounded-xl bg-amber py-3 text-sm font-black text-amber-foreground shadow-sm transition-all duration-300 ease-in-out hover:brightness-105 hover:shadow-[0_0_20px_rgba(255,215,0,0.4)] active:scale-[0.98] disabled:opacity-60 cursor-pointer " +
-            (cart.length > 0 ? "pulse-amber" : "")
-          }
+          className="mt-4 w-full rounded-xl py-3 text-sm font-black shadow-sm transition-all duration-300 ease-in-out hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.5)] active:scale-[0.98] disabled:opacity-60 cursor-pointer"
+          style={{ backgroundColor: "#FFD700", color: "#0B0410" }}
         >
           Create Order Link
         </button>

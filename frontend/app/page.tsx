@@ -413,8 +413,8 @@ export default function RukiPage() {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <h1 className="text-base tracking-normal select-none">
-          <span className="font-normal text-foreground/80">Kapruka</span> <span className="font-black text-primary">Ruki</span>
+        <h1 className="text-base tracking-tight select-none">
+          <span className="font-extrabold text-foreground">Kapruka</span> <span className="font-black" style={{ color: "#FFD700" }}>Ruki</span>
         </h1>
         <div className="flex items-center gap-1">
           <button
@@ -496,14 +496,6 @@ export default function RukiPage() {
                 >
                   {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
                 </button>
-                
-                <div className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 px-3 py-1 text-xs font-bold text-emerald-400 select-none shadow-[0_0_10px_rgba(16,185,129,0.15)]">
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400"></span>
-                  </span>
-                  Active
-                </div>
               </div>
             </div>
 
@@ -627,7 +619,8 @@ export default function RukiPage() {
                 <button
                   id="chat-send-btn"
                   onClick={() => handleSendMessage()}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-amber px-4 py-2 text-sm font-black text-amber-foreground shadow-sm transition-all duration-300 ease-in-out hover:brightness-105 hover:shadow-[0_0_15px_rgba(255,215,0,0.35)] active:scale-[0.97] disabled:opacity-60 cursor-pointer"
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-black shadow-sm transition-all duration-300 ease-in-out hover:brightness-110 hover:shadow-[0_0_18px_rgba(255,215,0,0.5)] active:scale-[0.97] disabled:opacity-60 cursor-pointer"
+                  style={{ backgroundColor: "#FFD700", color: "#0B0410" }}
                   disabled={!messageInput.trim()}
                 >
                   <Send className="h-4 w-4" /> Send
