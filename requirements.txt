@@ -9,3 +9,5 @@ streamlit
 pydantic
 fastapi
 uvicorn
+mcp
+httpx

@@ -40,19 +40,32 @@ def get_router(user_id: str) -> Router:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Warmup database client and embedding model
+    # Warmup database client, embedding model and MCP client
     logger.info("Starting lifespan warmup...")
     try:
         from infrastructure.db.qdrant_store import get_client
         from memory.lt_memory import encoder
+        from infrastructure.mcp.client import kapruka_mcp
+        
         # Warmup qdrant connection
         get_client()
         # Warmup embedding model
         encoder.encode("warmup", show_progress_bar=False)
-        logger.info("Warmup complete. Ready to serve requests.")
+        
+        # Initialize Kapruka MCP Client
+        await kapruka_mcp.start()
+        
+        logger.info("Warmup complete and MCP client initialized. Ready to serve requests.")
     except Exception as e:
         logger.exception(f"Warmup failed: {e}")
     yield
+    # Shutdown MCP client connection
+    try:
+        from infrastructure.mcp.client import kapruka_mcp
+        await kapruka_mcp.stop()
+        logger.info("MCP client connection stopped.")
+    except Exception as e:
+        logger.exception(f"Error during MCP client shutdown: {e}")
     logger.info("Shutting down lifespan...")
 
 
