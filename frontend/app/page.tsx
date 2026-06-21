@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, ShoppingCart, Sun, Moon } from "lucide-react";
+import { Menu, ShoppingCart, Sun, Moon, AlertCircle } from "lucide-react";
 
 import { LeftSidebar, Mode } from "@/components/LeftSidebar";
 import { RightCart, CartItem } from "@/components/RightCart";
@@ -24,7 +24,58 @@ interface Message {
   intents?: string[];
   products?: Product[];
   latency?: number;
+  isError?: boolean;
 }
+
+function EmptyStateIllustration({ theme }: { theme: "light" | "dark" }) {
+  return (
+    <svg className="h-20 w-20 mx-auto opacity-75 mb-3" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+      {/* Outer pulsing ring */}
+      <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 4" className="text-primary/40 animate-[spin_60s_linear_infinite]" />
+      
+      {/* Inner elements: Gift Box & Search glass */}
+      <rect x="35" y="45" width="30" height="25" rx="3" stroke="currentColor" strokeWidth="2" className="text-primary/60" />
+      <path d="M35 52H65" stroke="currentColor" strokeWidth="1.5" className="text-primary/60" />
+      <path d="M50 45V70" stroke="currentColor" strokeWidth="1.5" className="text-primary/60" />
+      
+      {/* Gift ribbon bow */}
+      <path d="M42 45C42 38 48 38 50 45C52 38 58 38 58 45" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-amber" />
+      
+      {/* Magnifying Glass */}
+      <circle cx="68" cy="38" r="12" fill={theme === "dark" ? "#1E0B36" : "#ffffff"} stroke="currentColor" strokeWidth="2" className="text-amber" />
+      <line x1="76.5" y1="46.5" x2="88" y2="58" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-amber" />
+      
+      {/* Small accent sparkles */}
+      <path d="M22 28L25 25M25 25L28 28M25 25V31M19 25H31" stroke="currentColor" strokeWidth="1" strokeLinecap="round" className="text-primary/30" />
+      <circle cx="80" cy="20" r="2" fill="currentColor" className="text-amber/50" />
+    </svg>
+  );
+}
+
+const isNoMatchesOrError = (msg: Message): boolean => {
+  if (msg.sender !== "ai") return false;
+  if (msg.isError) return true;
+  
+  // If the intent is SEARCH and there are no products
+  if (msg.intents?.includes("SEARCH") && (!msg.products || msg.products.length === 0)) {
+    return true;
+  }
+  
+  // Or check if the text states no items matched
+  const text = msg.text.toLowerCase();
+  const noMatchesPhrases = [
+    "couldn't find any products",
+    "no products matching",
+    "no matching products",
+    "contained allergens you avoid",
+    "could not find matching results"
+  ];
+  if (noMatchesPhrases.some(phrase => text.includes(phrase)) && (!msg.products || msg.products.length === 0)) {
+    return true;
+  }
+  
+  return false;
+};
 
 export default function RukiPage() {
   // ── Navigation
@@ -156,7 +207,7 @@ export default function RukiPage() {
       if (!resp.ok || !resp.body) throw new Error("SSE error");
 
       const reader = resp.body.getReader(); const dec = new TextDecoder("utf-8");
-      let buf = "", fullText = "", sseIntents: string[] = [], sseProducts: Product[] = [], sseLatency = 0;
+      let buf = "", fullText = "", sseIntents: string[] = [], sseProducts: Product[] = [], sseLatency = 0, hasError = false;
 
       while (true) {
         const { value, done } = await reader.read(); if (done) break;
@@ -175,16 +226,21 @@ export default function RukiPage() {
             if (ev === "intent_badge") { sseIntents = p.intents || []; setCurrentIntents(sseIntents); }
             else if (ev === "status") setCurrentStatus(p.message || "");
             else if (ev === "text") { setIsTyping(false); fullText += p.text || ""; setStreamedText(fullText); }
-            else if (ev === "product_carousel") sseProducts = p.products || [];
+            else if (ev === "product_carousel") {
+              if (p.type === "[PRODUCT_CAROUSEL_DATA]" || p.products) {
+                sseProducts = p.products || [];
+              }
+            }
             else if (ev === "latency") sseLatency = p.latency || 0;
+            else if (ev === "error") { hasError = true; }
           } catch { /* ignore */ }
         }
       }
-      setMessages(prev => [...prev, { id: `ai-${Date.now()}`, sender: "ai", text: fullText || "I searched Kapruka but couldn't find matching results.", intents: sseIntents, products: sseProducts.length > 0 ? sseProducts : undefined, latency: sseLatency }]);
+      setMessages(prev => [...prev, { id: `ai-${Date.now()}`, sender: "ai", text: fullText || (hasError ? "A stream error occurred while fetching catalog items." : "I searched Kapruka but couldn't find matching results."), intents: sseIntents, products: sseProducts.length > 0 ? sseProducts : undefined, latency: sseLatency, isError: hasError }]);
     } catch {
       // Offline fallback — no mock products shown
       const isLogistics = /deliver|colombo|kandy/i.test(userText);
-      setMessages(prev => [...prev, { id: `sim-${Date.now()}`, sender: "ai", text: isLogistics ? "Aney, yes! Kapruka delivers next-day. Standard shipping is LKR 350 to Colombo, Kandy, and surrounding districts." : "The backend is currently offline. Please ensure the FastAPI server is running and try again.", intents: isLogistics ? ["LOGISTICS"] : ["SEARCH"], latency: 0 }]);
+      setMessages(prev => [...prev, { id: `sim-${Date.now()}`, sender: "ai", text: isLogistics ? "Aney, yes! Kapruka delivers next-day. Standard shipping is LKR 350 to Colombo, Kandy, and surrounding districts." : "The backend is currently offline. Please ensure the FastAPI server is running and try again.", intents: isLogistics ? ["LOGISTICS"] : ["SEARCH"], latency: 0, isError: true }]);
     }
     setStreamedText(""); setCurrentStatus(null); setCurrentIntents([]); setIsTyping(false);
   };
@@ -225,9 +281,57 @@ export default function RukiPage() {
               {messages.map((msg, i) => (
                 <div key={msg.id || i} className="space-y-4">
                   {msg.sender === "ai" ? <AssistantBubble intents={msg.intents} latency={msg.latency}>{msg.text}</AssistantBubble> : <UserBubble>{msg.text}</UserBubble>}
+                  
                   {msg.products && msg.products.length > 0 && (
                     <motion.div initial="hidden" animate="show" variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08 } } }} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                       {msg.products.map(p => <ProductCard key={p.id} product={p} onAdd={() => handleAddToCart(p)} />)}
+                    </motion.div>
+                  )}
+
+                  {/* High-contrast inline alert card or empty search state illustration */}
+                  {isNoMatchesOrError(msg) && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className={`overflow-hidden rounded-2xl border p-6 text-center shadow-md max-w-[85%] mr-auto ${
+                        msg.isError
+                          ? "border-rose-500/30 bg-rose-500/5 text-foreground"
+                          : "border-border bg-surface text-foreground"
+                      }`}
+                    >
+                      {msg.isError ? (
+                        <div className="flex flex-col items-center gap-3">
+                          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-rose-500/20 text-rose-500 animate-pulse">
+                            <AlertCircle className="h-6 w-6" />
+                          </div>
+                          <div>
+                            <h4 className="text-base font-extrabold tracking-tight text-rose-500 uppercase">
+                              Service Error
+                            </h4>
+                            <p className="mt-1.5 text-sm font-medium leading-relaxed text-muted-foreground">
+                              The Kapruka Ruki AI service encountered an error or the streaming backend is currently offline. 
+                              Under no circumstances will we show fallback cached/mock items. Please verify your connection or try again.
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center">
+                          <EmptyStateIllustration theme={theme} />
+                          <h4 className="text-base font-extrabold tracking-tight text-primary uppercase select-none">
+                            No matching products found
+                          </h4>
+                          <p className="mt-2 max-w-md text-xs font-semibold leading-relaxed text-muted-foreground">
+                            Ruki AI searched the live Kapruka catalog but found no matching items for your search. 
+                            We have completely disabled fallback mock products to guarantee you only see real-time availability.
+                          </p>
+                          <button
+                            onClick={() => setMessageInput("Show me general popular gift items")}
+                            className="mt-4 rounded-xl border border-border bg-muted/50 px-4 py-2 text-xs font-bold transition-all duration-300 hover:bg-muted cursor-pointer"
+                          >
+                            Try another query
+                          </button>
+                        </div>
+                      )}
                     </motion.div>
                   )}
                 </div>

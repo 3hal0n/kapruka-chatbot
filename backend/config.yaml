@@ -1,7 +1,7 @@
 claude:
-  model: gemini-2.5-flash-lite-preview-06-17
-  model_intent_classify: gemini-2.5-flash-lite-preview-06-17
-  model_logistics: gemini-2.5-flash-lite-preview-06-17
+  model: gemini-2.5-flash
+  model_intent_classify: gemini-2.5-flash
+  model_logistics: gemini-2.5-flash
   max_tokens_classify: 512
   max_tokens_respond: 1200
   max_tokens_critique: 150

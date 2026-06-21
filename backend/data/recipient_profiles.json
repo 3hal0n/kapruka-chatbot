@@ -75,5 +75,21 @@
     },
     "preferences": {},
     "location": {}
+  },
+  "test_user_sse": {
+    "allergies": {
+      "wife": [
+        "almonds"
+      ]
+    },
+    "preferences": {
+      "wife": [
+        "milk chocolate",
+        "chocolate"
+      ]
+    },
+    "location": {
+      "wife": "Colombo"
+    }
   }
 }

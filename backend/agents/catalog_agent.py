@@ -1,6 +1,7 @@
 # agents/catalog_agent.py
 
 import json
+import asyncio
 from memory.lt_memory import search_catalog
 from agents import critic_agent
 from utils.config import CLAUDE_MODEL, CLAUDE_MAX_TOKENS_RESPOND, MAX_REFLECTION_ROUNDS, CATALOG_SEARCH_TOP_K
