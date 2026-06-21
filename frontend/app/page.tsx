@@ -249,18 +249,16 @@ export default function RukiPage() {
     <div className="flex h-screen w-full overflow-hidden bg-background text-foreground antialiased font-sans">
 
       {/* Mobile top bar */}
-      <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-border bg-surface/90 px-4 backdrop-blur-md md:hidden">
-        <button id="sidebar-toggle-btn-mobile" onClick={() => setLeftOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl text-foreground hover:bg-muted cursor-pointer" aria-label="Open menu">
+      <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-white/10 bg-[#3c1b63] text-white px-4 md:hidden">
+        <button id="sidebar-toggle-btn-mobile" onClick={() => setLeftOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer" aria-label="Open menu">
           <Menu className="h-5 w-5" />
         </button>
-        <h1 className="text-base tracking-tight select-none">
-          <span className="font-extrabold text-foreground">Kapruka</span> <span className="font-black" style={{ color: "#FFD700" }}>Ruki</span>
-        </h1>
+        <img src="/android-chrome-192x192.png" alt="Kapruka Logo" className="h-9 w-auto object-contain select-none" />
         <div className="flex items-center gap-1">
-          <button id="theme-toggle-btn-mobile" onClick={toggleTheme} className="grid h-10 w-10 place-items-center rounded-xl text-foreground hover:bg-muted cursor-pointer" aria-label="Toggle theme">
+          <button id="theme-toggle-btn-mobile" onClick={toggleTheme} className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer" aria-label="Toggle theme">
             {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
           </button>
-          <button id="cart-toggle-btn-mobile" onClick={() => setRightOpen(true)} className="relative grid h-10 w-10 place-items-center rounded-xl hover:bg-muted cursor-pointer" aria-label="Open cart">
+          <button id="cart-toggle-btn-mobile" onClick={() => setRightOpen(true)} className="relative grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer" aria-label="Open cart">
             <ShoppingCart className="h-5 w-5" />
             {cart.length > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-amber text-[10px] font-bold text-amber-foreground animate-pulse">{cart.reduce((s, i) => s + i.quantity, 0)}</span>}
           </button>
