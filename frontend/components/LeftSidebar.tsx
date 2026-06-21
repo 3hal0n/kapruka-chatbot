@@ -95,11 +95,11 @@ export function LeftSidebar({
                 className={
                   "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all duration-300 ease-in-out " +
                   (active
-                    ? "bg-primary text-primary-foreground shadow-sm shadow-purple-900/10"
-                    : "text-foreground hover:bg-muted")
+                    ? "bg-primary text-white shadow-sm shadow-[0_0_15px_rgba(255,255,255,0.15)]"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted")
                 }
               >
-                <Icon className={"h-4 w-4 " + (active ? "text-amber-300" : "text-muted-foreground")} />
+                <Icon className={"h-4 w-4 " + (active ? "text-amber" : "text-muted-foreground")} />
                 {label}
               </button>
             );

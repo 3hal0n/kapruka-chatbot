@@ -586,7 +586,7 @@ export default function GeniePage() {
                 <button
                   id="chat-send-btn"
                   onClick={() => handleSendMessage()}
-                  className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-amber px-4 py-2 text-sm font-extrabold text-amber-foreground shadow-sm transition-all duration-300 ease-in-out hover:brightness-105 active:scale-[0.97] disabled:opacity-60 cursor-pointer"
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-amber px-4 py-2 text-sm font-black text-amber-foreground shadow-sm transition-all duration-300 ease-in-out hover:brightness-105 hover:shadow-[0_0_15px_rgba(255,215,0,0.35)] active:scale-[0.97] disabled:opacity-60 cursor-pointer"
                   disabled={!messageInput.trim()}
                 >
                   <Send className="h-4 w-4" /> Send

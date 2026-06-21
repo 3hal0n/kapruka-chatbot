@@ -92,7 +92,7 @@ function ContextRow({ title, items, value, onClick }: ContextRowProps) {
               whileTap={{ scale: 0.96 }}
               animate={{
                 backgroundColor: active ? "#FFD700" : "rgba(255, 255, 255, 0.03)",
-                color: active ? "#0B0410" : "#C8B3E4",
+                color: active ? "#0B0410" : "#E9D5FF",
                 borderColor: active ? "#FFD700" : "rgba(255, 255, 255, 0.1)",
               }}
               transition={{ duration: 0.2, ease: "easeInOut" }}
