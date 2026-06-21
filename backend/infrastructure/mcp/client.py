@@ -326,10 +326,21 @@ async def _execute_mcp_tool(tool_name: str, arguments: dict) -> Any:
         return {"result": text_data}
 
 
+# In-memory caches for MCP tool calls
+PRODUCT_SEARCH_CACHE = {}
+PRODUCT_GET_CACHE = {}
+DELIVERY_CHECK_CACHE = {}
+
+
 # ── Typed Wrapper Functions for the 7 Kapruka Tools ──────────────────────────
 
 async def kapruka_search_products(query: str, limit: Optional[int] = None) -> dict:
     """Search Kapruka product catalog."""
+    cache_key = (query, limit)
+    if cache_key in PRODUCT_SEARCH_CACHE:
+        logger.info(f"Returning cached product search results for: {cache_key}")
+        return PRODUCT_SEARCH_CACHE[cache_key]
+
     params = {"q": query, "response_format": "json"}
     if limit is not None:
         params["limit"] = limit
@@ -354,12 +365,19 @@ async def kapruka_search_products(query: str, limit: Optional[int] = None) -> di
                 "checkout_ready": p.get("in_stock", True)
             }
             mapped_products.append(mapped_p)
-        return {"products": mapped_products, "result": mapped_products}
+        final_res = {"products": mapped_products, "result": mapped_products}
+        PRODUCT_SEARCH_CACHE[cache_key] = final_res
+        return final_res
+    PRODUCT_SEARCH_CACHE[cache_key] = res
     return res
 
 
 async def kapruka_get_product(product_id: str) -> dict:
     """Retrieve detailed product specifications."""
+    if product_id in PRODUCT_GET_CACHE:
+        logger.info(f"Returning cached product details for ID: {product_id}")
+        return PRODUCT_GET_CACHE[product_id]
+
     params = {"product_id": product_id, "response_format": "json"}
     args = {"params": params}
     res = await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_get_product", args)
@@ -374,6 +392,7 @@ async def kapruka_get_product(product_id: str) -> dict:
         res["stock"] = "In Stock" if res.get("in_stock") else "Out of Stock"
         res["category"] = cat_name
         res["checkout_ready"] = res.get("in_stock", True)
+    PRODUCT_GET_CACHE[product_id] = res
     return res
 
 
@@ -399,8 +418,16 @@ async def kapruka_list_delivery_cities(query: Optional[str] = None) -> dict:
 
 async def kapruka_check_delivery(city: str) -> dict:
     """Check delivery availability and timing tier for a location."""
+    city_clean = city.strip().lower()
+    if city_clean in DELIVERY_CHECK_CACHE:
+        logger.info(f"Returning cached delivery feasibility for: {city_clean}")
+        return DELIVERY_CHECK_CACHE[city_clean]
+
     args = {"params": {"city": city, "response_format": "json"}}
-    return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_check_delivery", args)
+    res = await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_check_delivery", args)
+    DELIVERY_CHECK_CACHE[city_clean] = res
+    return res
+
 
 
 async def kapruka_create_order(

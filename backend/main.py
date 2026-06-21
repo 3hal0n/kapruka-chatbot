@@ -153,6 +153,19 @@ async def chat_endpoint(request: ChatRequest):
                     except Exception as e:
                         logger.error(f"Failed parsing products JSON: {e}")
 
+                # 2.5. Cart Update event
+                elif isinstance(chunk, str) and chunk.startswith("<<CART_UPDATE>>:"):
+                    try:
+                        raw_data = chunk.split("<<CART_UPDATE>>:", 1)[1]
+                        cart_data = json.loads(raw_data)
+                        payload = {
+                            "type": "[CART_UPDATE]",
+                            **cart_data
+                        }
+                        yield f"event: cart_update\ndata: {json.dumps(payload)}\n\n"
+                    except Exception as e:
+                        logger.error(f"Failed parsing cart update JSON: {e}")
+
                 # 3. Preference Saving Status event
                 elif chunk == "<<PREF_SAVING>>":
                     payload = {

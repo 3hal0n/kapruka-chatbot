@@ -127,6 +127,24 @@ export default function RukiPage() {
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
 
+  // ── Speech Output
+  const speakResponse = (text: string) => {
+    if (!isAudioActive) return;
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const cleanText = text.replace(/<<.*?>>/g, "").trim();
+    if (!cleanText) return;
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = language === "සිංහල" ? "si-LK" : "en-US";
+    window.speechSynthesis.speak(utterance);
+  };
+
+  useEffect(() => {
+    if (!isAudioActive && typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+  }, [isAudioActive]);
+
   // ── Greeting on language change
   useEffect(() => {
     const text = language === "සිංහල"
@@ -141,17 +159,18 @@ export default function RukiPage() {
   }, [messages, streamedText, isTyping, currentStatus]);
 
   // ── Cart
-  const handleAddToCart = (product: Product) => {
+  const handleAddToCart = (product: Product, quantity?: number) => {
     const price = typeof product.price === "object" ? (product.price as any).amount : Number(product.price);
     const id = product.id || (product as any).code || "";
+    const qtyToAdd = quantity !== undefined ? quantity : (product as any).quantity || 1;
     setCart(prev => {
       const hit = prev.find(i => i.id === id);
-      if (hit) return prev.map(i => i.id === id ? { ...i, quantity: i.quantity + 1 } : i);
+      if (hit) return prev.map(i => i.id === id ? { ...i, quantity: i.quantity + qtyToAdd } : i);
       if (prev.length === 0) {
         fetch(`${BACKEND_URL}/api/delivery?city=Colombo`)
           .then(r => r.json()).then(d => { if (d.fee) setDeliveryFee(d.fee); }).catch(() => {});
       }
-      return [...prev, { id, name: product.name, price, image_url: product.image_url || product.image || "", quantity: 1 }];
+      return [...prev, { id, name: product.name, price, image_url: product.image_url || product.image || "", quantity: qtyToAdd }];
     });
     if (window.innerWidth < 768) setRightOpen(true);
   };
@@ -198,6 +217,10 @@ export default function RukiPage() {
     setMessageInput(""); setIsTyping(true); setCurrentStatus("Analyzing context...");
     setMessages(prev => [...prev, { id: `user-${Date.now()}`, sender: "user", text: userText }]);
 
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+
     const ctx: Record<string, any> = {};
     ctx[recipient.toLowerCase() || "default"] = { budget: budget || undefined, occasion: occasion || undefined, location: "Colombo" };
 
@@ -230,16 +253,34 @@ export default function RukiPage() {
                 sseProducts = p.products || [];
               }
             }
+            else if (ev === "cart_update") {
+              const products = p.products || [];
+              products.forEach((prod: Product) => {
+                handleAddToCart(prod);
+              });
+              if (p.recipient_name) setOrderRecipientName(p.recipient_name);
+              if (p.delivery_address) setOrderAddress(p.delivery_address);
+              if (p.contact_number) setOrderPhone(p.contact_number);
+              if (p.trigger_checkout) {
+                setTimeout(() => {
+                  handleCreateOrderLink();
+                }, 300);
+              }
+            }
             else if (ev === "latency") sseLatency = p.latency || 0;
             else if (ev === "error") { hasError = true; }
           } catch { /* ignore */ }
         }
       }
-      setMessages(prev => [...prev, { id: `ai-${Date.now()}`, sender: "ai", text: fullText || (hasError ? "A stream error occurred while fetching catalog items." : "I searched Kapruka but couldn't find matching results."), intents: sseIntents, products: sseProducts.length > 0 ? sseProducts : undefined, latency: sseLatency, isError: hasError }]);
+      const aiText = fullText || (hasError ? "A stream error occurred while fetching catalog items." : "I searched Kapruka but couldn't find matching results.");
+      setMessages(prev => [...prev, { id: `ai-${Date.now()}`, sender: "ai", text: aiText, intents: sseIntents, products: sseProducts.length > 0 ? sseProducts : undefined, latency: sseLatency, isError: hasError }]);
+      speakResponse(aiText);
     } catch {
       // Offline fallback — no mock products shown
       const isLogistics = /deliver|colombo|kandy/i.test(userText);
-      setMessages(prev => [...prev, { id: `sim-${Date.now()}`, sender: "ai", text: isLogistics ? "Aney, yes! Kapruka delivers next-day. Standard shipping is LKR 350 to Colombo, Kandy, and surrounding districts." : "The backend is currently offline. Please ensure the FastAPI server is running and try again.", intents: isLogistics ? ["LOGISTICS"] : ["SEARCH"], latency: 0, isError: true }]);
+      const text = isLogistics ? "Aney, yes! Kapruka delivers next-day. Standard shipping is LKR 350 to Colombo, Kandy, and surrounding districts." : "The backend is currently offline. Please ensure the FastAPI server is running and try again.";
+      setMessages(prev => [...prev, { id: `sim-${Date.now()}`, sender: "ai", text, intents: isLogistics ? ["LOGISTICS"] : ["SEARCH"], latency: 0, isError: true }]);
+      speakResponse(text);
     }
     setStreamedText(""); setCurrentStatus(null); setCurrentIntents([]); setIsTyping(false);
   };

@@ -28,12 +28,17 @@ def is_mock_mode() -> bool:
     return not api_key or api_key in ("your_gemini_api_key", "")
 
 
+_client_instance = None
+
 def _get_client() -> genai.Client:
     """Return a configured async-capable Google GenAI client."""
-    api_key = os.getenv("GEMINI_API_KEY", "")
-    if not api_key or api_key == "your_gemini_api_key":
-        raise RuntimeError("GEMINI_API_KEY is not set in .env")
-    return genai.Client(api_key=api_key)
+    global _client_instance
+    if _client_instance is None:
+        api_key = os.getenv("GEMINI_API_KEY", "")
+        if not api_key or api_key == "your_gemini_api_key":
+            raise RuntimeError("GEMINI_API_KEY is not set in .env")
+        _client_instance = genai.Client(api_key=api_key)
+    return _client_instance
 
 
 def _build_contents(system: str, messages: list[dict]) -> list[types.Content]:
@@ -152,42 +157,72 @@ async def async_chat(
 def _mock_response(system: str, messages: list[dict], json_mode: bool) -> str:
     """Return deterministic mock payloads that mirror real Gemini responses."""
     msg_text = messages[-1].get("content", "") if messages else ""
+    msg_lower = msg_text.lower()
 
     # 1. Router Intent Classifier Mock
     if "classify" in system.lower() or "intent" in system.lower():
-        if any(kw in msg_text.lower() for kw in ["colombo", "delivery", "track", "deliver", "kandy"]):
-            return json.dumps({
-                "intents": ["LOGISTICS"],
-                "allergies": {},
-                "preferences": {},
-                "search_recipient": None,
-                "location": "Colombo",
-                "deadline": None,
-                "search_query": None,
-                "tracking_code": None
-            })
+        search_query = None
+        search_recipient = None
+        intents = ["SEARCH"]
+        
+        # Simple extraction rules for queries
+        if "cake" in msg_lower:
+            search_query = "cake"
+        elif "chocolate" in msg_lower:
+            search_query = "chocolate"
+        elif "toy" in msg_lower:
+            search_query = "toy"
+        elif "flower" in msg_lower or "bouquet" in msg_lower:
+            search_query = "flowers"
+        else:
+            search_query = "gift"
+            
+        if "wife" in msg_lower:
+            search_recipient = "wife"
+        elif "husband" in msg_lower:
+            search_recipient = "husband"
+        elif "boy" in msg_lower:
+            search_recipient = "boy"
+        elif "girl" in msg_lower:
+            search_recipient = "girl"
+            
+        if any(kw in msg_lower for kw in ["colombo", "delivery", "track", "deliver", "kandy", "shipping"]):
+            intents.append("LOGISTICS")
+            
         return json.dumps({
-            "intents": ["SEARCH"],
+            "intents": intents,
             "allergies": {},
             "preferences": {},
-            "search_recipient": "wife",
-            "location": None,
+            "search_recipient": search_recipient,
+            "location": "Colombo" if "colombo" in msg_lower else ("Kandy" if "kandy" in msg_lower else None),
             "deadline": None,
-            "search_query": "chocolate cake",
-            "tracking_code": None
+            "search_query": search_query,
+            "tracking_code": None,
+            "cart_items": None,
+            "trigger_checkout": False,
+            "recipient_name": None,
+            "delivery_address": None,
+            "contact_number": None
         })
 
-    # 2. Critic Auditor Mock
-    if "critic" in system.lower() or "auditor" in system.lower():
+    # 2. Critic Auditor Mock (Only for JSON mode validation checks)
+    if json_mode and ("critic" in system.lower() or "auditor" in system.lower()):
         return json.dumps({"approved": True, "issues": [], "suggestion": None})
 
     # 3. Logistics Concierge Mock
     if "logistics" in system.lower():
-        return "Yes, Kapruka delivers to Colombo! Standard timing is next-day with a delivery fee of LKR 350."
+        return "Yes, Kapruka delivers next-day! Standard shipping to Colombo is LKR 350."
 
-    # 4. Catalog / General Concierge Mock
+    # 4. Catalog / General Concierge Mock (Or fallback for failed text calls)
+    search_q = "gift"
+    if "cake" in msg_lower:
+        search_q = "cake"
+    elif "chocolate" in msg_lower:
+        search_q = "chocolate"
+    elif "toy" in msg_lower:
+        search_q = "toy"
     return (
-        "Aney sure, puluwan machan! For your loved one, I checked the live Kapruka catalog. "
+        f"Aney sure, puluwan machan! For your {search_q}, I checked the live Kapruka catalog. "
         "To place the order, please share: Recipient's Name, Delivery Address, and Phone Number."
     )
 

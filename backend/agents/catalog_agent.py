@@ -154,7 +154,9 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
     print("\n[Catalog] Draft streamed.")
 
     # 2. Check if critic needed
-    skip_critic = not profile_summary.get("allergies") and not profile_summary.get("preferences")
+    has_allergies = any(len(v) > 0 for v in allergies.values()) if allergies else False
+    has_preferences = any(len(v) > 0 for v in preferences.values()) if preferences else False
+    skip_critic = not has_allergies and not has_preferences
     if skip_critic:
         print("[Critic] Skipped — no constraints.")
         return

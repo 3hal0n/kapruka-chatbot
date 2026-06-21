@@ -13,8 +13,13 @@ from pydantic import BaseModel
 from typing import Literal
 
 
+class CartItemQuery(BaseModel):
+    query: str
+    quantity: int = 1
+
+
 class RouterOutput(BaseModel):
-    intents: list[Literal["SEARCH", "LOGISTICS", "PREFERENCE_UPDATE"]]
+    intents: list[Literal["SEARCH", "LOGISTICS", "PREFERENCE_UPDATE", "CART_ACTION"]]
     allergies: dict
     preferences: dict
     search_recipient: str | list | None
@@ -22,6 +27,12 @@ class RouterOutput(BaseModel):
     deadline: str | None
     search_query: str | None
     tracking_code: str | None
+    cart_items: list[CartItemQuery] | None = None
+    trigger_checkout: bool | None = False
+    recipient_name: str | None = None
+    delivery_address: str | None = None
+    contact_number: str | None = None
+
 
 
 class Router:
@@ -71,7 +82,12 @@ class Router:
                 "location": None,
                 "deadline": None,
                 "search_query": user_message,
-                "tracking_code": None
+                "tracking_code": None,
+                "cart_items": None,
+                "trigger_checkout": False,
+                "recipient_name": None,
+                "delivery_address": None,
+                "contact_number": None
             }
 
     async def route_stream(self, user_message: str, recipient_context: dict | None = None):
@@ -98,6 +114,57 @@ class Router:
 
         # Yield classification token for SSE handler
         yield f"<<CLASSIFICATION>>:{json.dumps(classification)}"
+
+        # Handle CART_ACTION
+        cart_products_to_add = []
+        if "CART_ACTION" in intents:
+            cart_items = classification.get("cart_items") or []
+            trigger_checkout = classification.get("trigger_checkout") or False
+            
+            for item in cart_items:
+                q = item.get("query")
+                quantity = item.get("quantity", 1)
+                if q:
+                    try:
+                        from infrastructure.mcp.client import kapruka_search_products
+                        search_res = await kapruka_search_products(q, limit=1)
+                        products = []
+                        if isinstance(search_res, dict):
+                            products = search_res.get("products") or search_res.get("result") or []
+                        elif isinstance(search_res, list):
+                            products = search_res
+                            
+                        if products:
+                            # Take the first product matching and set its quantity
+                            p_to_add = dict(products[0])
+                            p_to_add["quantity"] = quantity
+                            cart_products_to_add.append(p_to_add)
+                    except Exception as e:
+                        print(f"Error searching product '{q}' for cart: {e}")
+            
+            # If products were matched or checkout is triggered, yield <<CART_UPDATE>>:
+            if cart_products_to_add or trigger_checkout:
+                cart_update_payload = {
+                    "products": cart_products_to_add,
+                    "trigger_checkout": trigger_checkout,
+                    "recipient_name": classification.get("recipient_name"),
+                    "delivery_address": classification.get("delivery_address"),
+                    "contact_number": classification.get("contact_number")
+                }
+                yield f"<<CART_UPDATE>>:{json.dumps(cart_update_payload)}"
+
+            # Confirm to the user
+            if cart_products_to_add:
+                names = ", ".join([p.get("name", "Item") for p in cart_products_to_add])
+                confirm_msg = f"Done! I've added {names} to your cart. "
+                if trigger_checkout:
+                    confirm_msg += "Generating your checkout link now..."
+                yield confirm_msg
+                full_response_chunks.append(confirm_msg)
+            elif trigger_checkout:
+                confirm_msg = "Perfect! Generating your checkout link now. Please review the details in the popup..."
+                yield confirm_msg
+                full_response_chunks.append(confirm_msg)
 
         # 2. allergies_dict and preferences_dict still needed for PREFERENCE_UPDATE
         allergies_dict = classification.get("allergies") or {}
