@@ -18,6 +18,8 @@ interface OrderModalProps {
   setAddress: (v: string) => void;
   phone: string;
   setPhone: (v: string) => void;
+  giftMessage: string;
+  setGiftMessage: (v: string) => void;
   isLoading: boolean;
   error: string | null;
   onSubmit: () => void;
@@ -34,6 +36,8 @@ export function OrderModal({
   setAddress,
   phone,
   setPhone,
+  giftMessage,
+  setGiftMessage,
   isLoading,
   error,
   onSubmit,
@@ -104,6 +108,20 @@ export function OrderModal({
                     />
                   </div>
                 ))}
+                {/* Gift message — optional bonus field */}
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-1">
+                    🎁 Gift Message <span className="font-normal normal-case">(optional)</span>
+                  </label>
+                  <textarea
+                    id="order-gift-message"
+                    placeholder="e.g. Happy Birthday Amali! Wishing you all the best 🎉"
+                    value={giftMessage}
+                    onChange={e => setGiftMessage(e.target.value)}
+                    rows={2}
+                    className="w-full rounded-xl border border-border bg-muted/40 px-3 py-2.5 text-sm font-medium outline-none transition-all focus:ring-2 focus:ring-ring/40 text-foreground placeholder:text-muted-foreground/60 resize-none"
+                  />
+                </div>
               </div>
 
               {error && (

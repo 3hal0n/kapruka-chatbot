@@ -11,6 +11,45 @@ interface AssistantBubbleProps {
 }
 
 export function AssistantBubble({ children, intents, latency }: AssistantBubbleProps) {
+  const renderFormattedText = (text: React.ReactNode) => {
+    if (typeof text !== "string") return text;
+    
+    const lines = text.split("\n");
+    return lines.map((line, idx) => {
+      // Number list matches (e.g. "1. Recipient's Name")
+      const listMatch = line.match(/^(\d+)\.\s+(.*)$/);
+      if (listMatch) {
+        const num = listMatch[1];
+        const content = listMatch[2];
+        return (
+          <div key={idx} className="flex gap-2 my-1 leading-relaxed text-foreground select-text">
+            <span className="font-extrabold text-primary min-w-[18px]">{num}.</span>
+            <span className="font-medium">{content}</span>
+          </div>
+        );
+      }
+      
+      // Bullet list matches (e.g. "* ", "- ")
+      const bulletMatch = line.match(/^[-*]\s+(.*)$/);
+      if (bulletMatch) {
+        const content = bulletMatch[1];
+        return (
+          <div key={idx} className="flex gap-2 my-1 leading-relaxed text-foreground pl-3 select-text">
+            <span className="text-primary font-black">•</span>
+            <span className="font-medium">{content}</span>
+          </div>
+        );
+      }
+      
+      // Default line
+      return (
+        <p key={idx} className="min-h-[1.25rem] leading-relaxed break-words whitespace-pre-wrap select-text">
+          {line}
+        </p>
+      );
+    });
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -22,7 +61,7 @@ export function AssistantBubble({ children, intents, latency }: AssistantBubbleP
         <Sparkles className="h-4 w-4" />
       </div>
       <div className="rounded-2xl rounded-tl-md border border-border bg-primary-soft px-4 py-3 text-sm font-medium leading-relaxed text-foreground shadow-sm">
-        <div className="whitespace-pre-line">{children}</div>
+        <div className="flex flex-col space-y-1">{renderFormattedText(children)}</div>
         
         {/* Intent indicators and latency tags */}
         {intents && intents.length > 0 && (

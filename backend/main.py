@@ -121,6 +121,7 @@ class OrderRequest(BaseModel):
     delivery_address: str
     contact_number: str
     city: Optional[str] = "Colombo"
+    gift_message: Optional[str] = None
 
 
 @app.post("/api/chat")
@@ -316,7 +317,19 @@ async def create_order_endpoint(request: OrderRequest):
     try:
         from infrastructure.mcp.client import kapruka_create_order
 
-        # Use first cart item as primary product (Kapruka creates one order per product)
+        # Build full cart array for multi-item orders
+        cart_payload = [
+            {
+                "product_id": item.id,
+                "quantity": item.quantity,
+                "name": item.name,
+                "price": item.price,
+            }
+            for item in request.cart
+        ]
+
+        # Use first cart item as primary product_id for compatibility,
+        # but pass the full cart array for multi-item checkout support
         first_item = request.cart[0]
         result = await kapruka_create_order(
             product_id=first_item.id,
@@ -324,6 +337,8 @@ async def create_order_endpoint(request: OrderRequest):
             recipient_name=request.recipient_name,
             delivery_address=request.delivery_address,
             contact_number=request.contact_number,
+            gift_message=request.gift_message,
+            cart=cart_payload,
         )
         logger.info(f"kapruka_create_order result: {result}")
 

@@ -16,6 +16,7 @@ def _generate(user_content: str) -> str:
         messages=[{"role": "user", "content": user_content}],
         max_tokens=CLAUDE_MAX_TOKENS_RESPOND,
         model=CLAUDE_MODEL,
+        temperature=0.7,  # creative, warm responses
     )
 
 
@@ -39,6 +40,7 @@ def _generate_stream(user_content: str):
         messages=[{"role": "user", "content": user_content}],
         max_tokens=CLAUDE_MAX_TOKENS_RESPOND,
         model=CLAUDE_MODEL,
+        temperature=0.7,  # warm, creative responses
     )
 
 
@@ -108,7 +110,58 @@ def filter_allergens(products: list, recipient_allergies: set) -> list:
     return filtered
 
 
-async def run_stream(recipients: set, search_query: str, old_profile: dict, new_profile: dict, query_vector: list = None, budget_limit: float = None):
+# Occasion-aware fallback search queries
+OCCASION_FALLBACKS = {
+    "birthday": ["birthday cake", "chocolate", "flowers", "gift hamper"],
+    "anniversary": ["flowers", "chocolate box", "jewelry", "gift hamper"],
+    "valentine": ["roses", "chocolate", "jewelry", "teddy bear"],
+    "graduation": ["pen set", "book", "gift hamper", "watch"],
+    "christmas": ["hamper", "chocolate", "gift box", "cake"],
+    "mother": ["flowers", "chocolate", "spa", "gift hamper"],
+    "father": ["watch", "book", "gift hamper", "cake"],
+    "default": ["gift hamper", "chocolate", "flowers", "cake"]
+}
+
+
+def calculate_match_score(product: dict, search_query: str, preferences: set, budget: float = None) -> int:
+    """Calculate a relevance match score (0-99) for a product given context."""
+    score = 55  # base score
+    name = str(product.get("name") or "").lower()
+    category = str(product.get("category") or "").lower()
+    specs = str(product.get("specs") or "").lower()
+    query_words = search_query.lower().split()
+
+    # Name/category keyword match
+    matched_words = sum(1 for w in query_words if w in name or w in category)
+    score += min(matched_words * 10, 25)
+
+    # Specs keyword match
+    if any(w in specs for w in query_words):
+        score += 5
+
+    # Preference match bonus
+    if preferences:
+        if any(str(pref).lower() in name or str(pref).lower() in specs for pref in preferences):
+            score += 10
+
+    # Budget fit bonus — well within budget earns more points
+    if budget:
+        price = parse_product_price(product.get("price"))
+        if price > 0:
+            if price <= budget * 0.7:
+                score += 5  # great value
+            elif price <= budget:
+                score += 2  # fits budget
+
+    # In-stock bonus
+    avail = str(product.get("availability") or product.get("stock") or "").lower()
+    if "in stock" in avail or "available" in avail:
+        score += 3
+
+    return min(score, 99)
+
+
+async def run_stream(recipients: set, search_query: str, old_profile: dict, new_profile: dict, query_vector: list = None, budget_limit: float = None, occasion: str = None):
     from infrastructure.mcp.client import kapruka_search_products
     import asyncio
 
@@ -144,8 +197,20 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
     if len(products) < 3:
         fallback_queries = []
         sq_lower = search_query.lower()
-        if "birthday" in sq_lower or "anniversary" in sq_lower or "gift" in sq_lower:
-            fallback_queries = ["gift", "cake", "chocolate"]
+        occ_lower = (occasion or "").lower()
+
+        # Check occasion-aware fallbacks first
+        for key, queries in OCCASION_FALLBACKS.items():
+            if key in sq_lower or key in occ_lower:
+                fallback_queries = queries
+                break
+        
+        # Generic gift/birthday fallback
+        if not fallback_queries:
+            if "birthday" in sq_lower or "anniversary" in sq_lower or "gift" in sq_lower:
+                fallback_queries = OCCASION_FALLBACKS["birthday"]
+            else:
+                fallback_queries = OCCASION_FALLBACKS["default"]
         
         for fq in fallback_queries:
             if fq != sq_lower:
@@ -198,6 +263,17 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
         yield "I searched the catalog, but all matching products contained allergens you avoid. Could you try checking for other items?"
         return
 
+    # Add match scores to each product
+    all_preferences_set = set()
+    for res in recipients:
+        all_preferences_set.update(preferences.get(res, set()))
+    
+    for p in filtered_products:
+        p["match_score"] = calculate_match_score(p, search_query, all_preferences_set, budget_limit)
+    
+    # Sort by match score descending
+    filtered_products.sort(key=lambda p: p.get("match_score", 0), reverse=True)
+
     # Yield filtered products as metadata token
     yield f"<<PRODUCTS>>:{json.dumps(filtered_products)}"
 
@@ -210,8 +286,25 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
 
     profile_summary = {"allergies": allergies, "preferences": preferences, "location": location}
 
+    # Build context-rich notes for the LLM
+    context_notes = []
+    if occasion:
+        context_notes.append(f"Occasion: {occasion}")
+    if budget_limit:
+        context_notes.append(f"Budget: LKR {int(budget_limit)} (all shown products fit)")
+    if all_allergies_set:
+        allergen_names = ", ".join(sorted(all_allergies_set))
+        context_notes.append(f"Allergens filtered out: {allergen_names} — reassure the user these have been removed")
+    if all_preferences_set:
+        pref_names = ", ".join(sorted(all_preferences_set))
+        context_notes.append(f"Known preferences: {pref_names} — mention them naturally if relevant")
+
+    context_block = "\n".join(context_notes) if context_notes else ""
+
     user_content = (
-        f"{profile_summary}\n"
+        f"{context_block}\n" if context_block else ""
+    ) + (
+        f"Recipients: {', '.join(str(r) for r in recipients) if recipients else 'someone special'}\n"
         f"Search: {search_query}\n\n"
         f"Matching products:\n" + "\n".join(product_lines)
     )
@@ -225,12 +318,11 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
     draft = "".join(draft_chunks)
     print("\n[Catalog] Draft streamed.")
 
-    # 2. Check if critic needed
+    # 2. Check if critic needed — only run when allergens are present (safety-critical)
     has_allergies = any(len(v) > 0 for v in allergies.values()) if allergies else False
-    has_preferences = any(len(v) > 0 for v in preferences.values()) if preferences else False
-    skip_critic = not has_allergies and not has_preferences
+    skip_critic = not has_allergies  # skip if no allergens; preferences alone don't need critic
     if skip_critic:
-        print("[Critic] Skipped — no constraints.")
+        print("[Critic] Skipped — no allergen constraints.")
         return
 
     # 3. Run critic on full draft
@@ -270,6 +362,7 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
             messages=[{"role": "user", "content": content}],
             max_tokens=CLAUDE_MAX_TOKENS_RESPOND,
             model=CLAUDE_MODEL,
+            temperature=0.5,  # balanced revision
         ):
             revised_chunks.append(chunk)
             yield chunk

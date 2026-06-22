@@ -67,6 +67,7 @@ def chat(
     max_tokens: int,
     model: str = DEFAULT_MODEL,
     json_mode: bool = False,
+    temperature: float = 0.7,
 ) -> str:
     """
     Send a single-turn (or multi-turn) chat request to Gemini and return the
@@ -83,6 +84,7 @@ def chat(
         config = types.GenerateContentConfig(
             system_instruction=system,
             max_output_tokens=max_tokens,
+            temperature=temperature,
             response_mime_type="application/json" if json_mode else "text/plain",
         )
 
@@ -106,6 +108,7 @@ def chat_stream(
     messages: list[dict],
     max_tokens: int,
     model: str = DEFAULT_MODEL,
+    temperature: float = 0.7,
 ) -> Generator[str, None, None]:
     """
     Same as chat() but yields text delta chunks as they arrive from Gemini's
@@ -122,6 +125,7 @@ def chat_stream(
         config = types.GenerateContentConfig(
             system_instruction=system,
             max_output_tokens=max_tokens,
+            temperature=temperature,
         )
 
         for chunk in client.models.generate_content_stream(
@@ -146,12 +150,13 @@ async def async_chat(
     max_tokens: int,
     model: str = DEFAULT_MODEL,
     json_mode: bool = False,
+    temperature: float = 0.7,
 ) -> str:
     """
     Async wrapper around chat() so async callers don't block the event loop.
     Uses asyncio.to_thread to offload the synchronous Gemini SDK call.
     """
-    return await asyncio.to_thread(chat, system, messages, max_tokens, model, json_mode)
+    return await asyncio.to_thread(chat, system, messages, max_tokens, model, json_mode, temperature)
 
 
 # ── Mock response helpers ─────────────────────────────────────────────────────

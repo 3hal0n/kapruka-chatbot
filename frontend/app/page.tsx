@@ -112,6 +112,7 @@ export default function RukiPage() {
   const [currentIntents, setCurrentIntents] = useState<string[]>([]);
   const [streamedText, setStreamedText] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
 
   // ── Cart state
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -122,10 +123,18 @@ export default function RukiPage() {
   const [orderRecipientName, setOrderRecipientName] = useState("");
   const [orderAddress, setOrderAddress] = useState("");
   const [orderPhone, setOrderPhone] = useState("");
+  const [orderGiftMessage, setOrderGiftMessage] = useState("");
   const [isOrderLoading, setIsOrderLoading] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
+
+  // ── Memory recall toast
+  const [memoryToast, setMemoryToast] = useState<string | null>(null);
+  const showMemoryToast = (msg: string) => {
+    setMemoryToast(msg);
+    setTimeout(() => setMemoryToast(null), 3500);
+  };
 
   // ── Speech Output
   const speakResponse = (text: string) => {
@@ -153,9 +162,21 @@ export default function RukiPage() {
     setMessages([{ id: "initial-greeting", sender: "ai", text }]);
   }, [language]);
 
+  const scrollToBottom = (behavior: "smooth" | "auto" = "smooth") => {
+    const container = scrollViewportRef.current;
+    if (container) {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior
+      });
+    }
+  };
+
   // ── Autoscroll
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    scrollToBottom("smooth");
+    const timer = setTimeout(() => scrollToBottom("smooth"), 150);
+    return () => clearTimeout(timer);
   }, [messages, streamedText, isTyping, currentStatus]);
 
   // ── Cart
@@ -193,7 +214,7 @@ export default function RukiPage() {
     try {
       const res = await fetch(`${BACKEND_URL}/api/order`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userIdRef.current, cart: cart.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity, image_url: i.image_url })), recipient_name: orderRecipientName, delivery_address: orderAddress, contact_number: orderPhone }),
+        body: JSON.stringify({ user_id: userIdRef.current, cart: cart.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity, image_url: i.image_url })), recipient_name: orderRecipientName, delivery_address: orderAddress, contact_number: orderPhone, gift_message: orderGiftMessage || undefined }),
       });
       const data = await res.json();
       const url = data.checkout_url || `https://www.kapruka.com/checkout/guest?order_ref=${data.order_id}`;
@@ -246,7 +267,13 @@ export default function RukiPage() {
           try {
             const p = JSON.parse(dv);
             if (ev === "intent_badge") { sseIntents = p.intents || []; setCurrentIntents(sseIntents); }
-            else if (ev === "status") setCurrentStatus(p.message || "");
+            else if (ev === "status") {
+              setCurrentStatus(p.message || "");
+              // Show a memory toast when preferences are being saved
+              if (p.code === "PREF_SAVING" && p.message) {
+                showMemoryToast("✓ Remembered your preferences!");
+              }
+            }
             else if (ev === "text") { setIsTyping(false); fullText += p.text || ""; setStreamedText(fullText); }
             else if (ev === "product_carousel") {
               if (p.type === "[PRODUCT_CAROUSEL_DATA]" || p.products) {
@@ -326,7 +353,7 @@ export default function RukiPage() {
             <div className="relative flex flex-col h-full overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl shadow-purple-950/50">
 
               {/* Chat thread */}
-              <div className="scroll-slim flex-1 overflow-y-auto h-full space-y-5 px-4 pb-24 pt-6 md:px-6 md:pb-24 md:pt-6">
+              <div ref={scrollViewportRef} className="scroll-slim flex-1 overflow-y-auto h-full space-y-5 px-4 pb-24 pt-6 md:px-6 md:pb-24 md:pt-6">
                 {messages.map((msg, i) => (
                   <div key={msg.id || i} className="space-y-4">
                     {msg.sender === "ai" ? <AssistantBubble intents={msg.intents} latency={msg.latency}>{msg.text}</AssistantBubble> : <UserBubble>{msg.text}</UserBubble>}
@@ -417,7 +444,21 @@ export default function RukiPage() {
 
       {(leftOpen || rightOpen) && <div onClick={() => { setLeftOpen(false); setRightOpen(false); }} className="fixed inset-0 z-30 bg-black/40 backdrop-blur-xs md:hidden" />}
 
-      <OrderModal open={isOrderModalOpen} onClose={() => setIsOrderModalOpen(false)} cart={cart} total={total} recipientName={orderRecipientName} setRecipientName={setOrderRecipientName} address={orderAddress} setAddress={setOrderAddress} phone={orderPhone} setPhone={setOrderPhone} isLoading={isOrderLoading} error={orderError} onSubmit={handleSubmitOrder} />
+      {/* Memory recall toast */}
+      <AnimatePresence>
+        {memoryToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+            className="fixed bottom-28 left-1/2 -translate-x-1/2 z-50 bg-primary text-primary-foreground px-4 py-2 rounded-full text-xs font-bold shadow-lg select-none"
+          >
+            {memoryToast}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <OrderModal open={isOrderModalOpen} onClose={() => setIsOrderModalOpen(false)} cart={cart} total={total} recipientName={orderRecipientName} setRecipientName={setOrderRecipientName} address={orderAddress} setAddress={setOrderAddress} phone={orderPhone} setPhone={setOrderPhone} giftMessage={orderGiftMessage} setGiftMessage={setOrderGiftMessage} isLoading={isOrderLoading} error={orderError} onSubmit={handleSubmitOrder} />
 
       <CheckoutSuccessModal open={isCheckoutModalOpen} onClose={() => setIsCheckoutModalOpen(false)} checkoutUrl={checkoutUrl} />
 

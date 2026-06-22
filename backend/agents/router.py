@@ -50,7 +50,7 @@ class Router:
             max_tokens=CLAUDE_MAX_TOKENS_CLASSIFY,
             model=CLAUDE_MODEL_CLASSIFY,
             json_mode=True,
-
+            temperature=0.1,  # deterministic JSON classification
         )
 
         #structured output extraction - json format
@@ -110,6 +110,9 @@ class Router:
 
         # Yield classification token for SSE handler
         yield f"<<CLASSIFICATION>>:{json.dumps(classification)}"
+
+        # Initialize response chunks list early (needed by CART_ACTION block below)
+        full_response_chunks = []
 
         # Handle CART_ACTION
         cart_products_to_add = []
@@ -230,9 +233,8 @@ class Router:
         print("old profile is" ,old_profile)
         print("new profile is",new_profile)
 
-        # Initialize before if blocks
+        # Initialize recipients set (full_response_chunks already initialized above)
         all_recipients = set(recipient_list)
-        full_response_chunks = []
 
         # 4. PREFERENCE_UPDATE — fire and forget
         if "PREFERENCE_UPDATE" in intents:
@@ -272,7 +274,8 @@ class Router:
                 old_profile=old_profile,
                 new_profile=new_profile,
                 query_vector=query_vector,
-                budget_limit=budget_limit
+                budget_limit=budget_limit,
+                occasion=classification.get("occasion") or (recipient_context or {}).get("occasion")
             ):
                 if chunk != "<<CLEAR>>":
                     full_response_chunks.append(chunk)

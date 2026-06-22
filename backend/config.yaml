@@ -2,10 +2,10 @@ claude:
   model: gemini-2.5-flash
   model_intent_classify: gemini-2.5-flash
   model_logistics: gemini-2.5-flash
-  max_tokens_classify: 256
-  max_tokens_respond: 350
-  max_tokens_critique: 150
-  max_tokens_logistics: 150
+  max_tokens_classify: 512
+  max_tokens_respond: 600
+  max_tokens_critique: 256
+  max_tokens_logistics: 200
 
 catalog_agent:
   max_reflection_rounds: 3
