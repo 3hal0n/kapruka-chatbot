@@ -322,7 +322,7 @@ def _sanitise_search_query(query: str) -> str:
     return q if q else "gift"
 
 
-async def run_stream(recipients: set, search_query: str, old_profile: dict, new_profile: dict, query_vector: list = None, budget_limit: float = None, occasion: str = None):
+async def run_stream(recipients: set, search_query: str, old_profile: dict, new_profile: dict, query_vector: list = None, budget_limit: float = None, occasion: str = None, user_raw_message: str = ""):
     from infrastructure.mcp.client import kapruka_search_products
     import asyncio
 
@@ -350,6 +350,52 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
         products = []
     else:
         products = [p for p in products if isinstance(p, dict)]
+
+    # ── ZERO-TRUST PRE-LLM ALLERGEN HARD-STOP ────────────────────────────────
+    # This executes immediately after the raw MCP payload is parsed — before
+    # price filtering, fallback queries, scoring, or any LLM call.
+    #
+    # Two independent trigger paths (either is sufficient to activate the purge):
+    #   A. Profile-based  — any recipient's stored allergen list is non-empty.
+    #   B. Message-based  — the raw user message contains a nut/allergen keyword.
+    #
+    # Uses simple case-insensitive substring matching (no word-boundary) for
+    # maximum recall at this gate.  The more precise word-boundary filter
+    # (filter_allergens) runs again later as the definitive pass.
+    _DANGER_WORDS = [
+        "nut", "nuts", "pistachio", "cashew", "almond",
+        "peanut", "walnut", "hazelnut", "groundnut",
+    ]
+
+    # Determine whether the profile already has allergens recorded
+    _profile_has_allergies = any(
+        bool(v)
+        for profile_dict in (old_profile, new_profile)
+        for v in (profile_dict.get("allergies") or {}).values()
+    )
+
+    # Check whether the raw user message itself signals an allergen concern
+    _msg_triggers_danger = any(
+        kw in user_raw_message.lower() for kw in _DANGER_WORDS
+    )
+
+    if _profile_has_allergies or _msg_triggers_danger:
+        pre_purge_count = len(products)
+        products = [
+            p for p in products
+            if not any(
+                kw in (p.get("name") or "").lower() or
+                kw in (p.get("description") or "").lower()
+                for kw in _DANGER_WORDS
+            )
+        ]
+        purged = pre_purge_count - len(products)
+        if purged:
+            trigger = "profile allergens" if _profile_has_allergies else "message keyword"
+            print(
+                f"[HardStop:AllergenPurge] Removed {purged} product(s) from raw MCP payload "
+                f"(trigger: {trigger}). {len(products)} product(s) remain."
+            )
 
     # Filter products by price if budget limit is provided
     if budget_limit is not None:

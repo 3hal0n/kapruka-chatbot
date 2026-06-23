@@ -525,7 +525,8 @@ class Router:
                 new_profile=new_profile,
                 query_vector=query_vector,
                 budget_limit=budget_limit,
-                occasion=classification.get("occasion") or (recipient_context or {}).get("occasion")
+                occasion=classification.get("occasion") or (recipient_context or {}).get("occasion"),
+                user_raw_message=user_message,
             ):
                 if chunk != "<<CLEAR>>":
                     full_response_chunks.append(chunk)
