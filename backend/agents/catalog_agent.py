@@ -86,27 +86,79 @@ def parse_product_price(price_val: Any) -> float:
 
 
 def filter_allergens(products: list, recipient_allergies: set) -> list:
-    """Filter out products that match recipient allergies in name, specs, or category."""
-    filtered = []
-    allergies_clean = [str(a).strip().lower() for a in recipient_allergies if a]
-    
+    """
+    Deterministic allergen filter — runs BEFORE any LLM call.
+
+    For each allergen term supplied, the function expands it to a set of
+    semantically-related substrings covering common naming variants
+    (e.g. "nuts" expands to nut, cashew, almond, peanut, pistachio …).
+    It then case-insensitively scans four product fields: name, description,
+    specs, and category.  Any product matching at least one allergen substring
+    in any field is dropped and logged.
+    """
+
+    # ── Allergen term expansion map ────────────────────────────────────────────
+    # Keys are canonical allergen names (lower-case); values are substrings to
+    # match anywhere in a product string.  Add more entries as needed.
+    ALLERGEN_EXPANSIONS: dict[str, list[str]] = {
+        "nuts":        ["nut", "cashew", "almond", "peanut", "pistachio",
+                        "walnut", "hazelnut", "pecan", "macadamia", "praline"],
+        "nut":         ["nut", "cashew", "almond", "peanut", "pistachio",
+                        "walnut", "hazelnut", "pecan", "macadamia", "praline"],
+        "peanut":      ["peanut", "groundnut", "monkey nut"],
+        "peanuts":     ["peanut", "groundnut", "monkey nut"],
+        "cashew":      ["cashew"],
+        "almond":      ["almond"],
+        "pistachio":   ["pistachio"],
+        "walnut":      ["walnut"],
+        "hazelnut":    ["hazelnut", "nutella"],
+        "gluten":      ["gluten", "wheat", "barley", "rye", "flour"],
+        "dairy":       ["milk", "cream", "butter", "cheese", "lactose", "whey",
+                        "casein", "dairy"],
+        "milk":        ["milk", "cream", "butter", "cheese", "lactose", "whey",
+                        "casein", "dairy"],
+        "egg":         ["egg"],
+        "eggs":        ["egg"],
+        "soy":         ["soy", "soya", "tofu"],
+        "seafood":     ["prawn", "shrimp", "crab", "lobster", "fish", "salmon",
+                        "tuna", "anchovy", "seafood", "shellfish"],
+        "shellfish":   ["prawn", "shrimp", "crab", "lobster", "shellfish"],
+        "chocolate":   ["chocolate", "cocoa", "cacao"],
+    }
+
+    # Build the flat list of substrings to reject, from all supplied allergens
+    reject_terms: set[str] = set()
+    for raw_allergen in recipient_allergies:
+        term = str(raw_allergen).strip().lower()
+        if not term:
+            continue
+        # Use the expansion if available; otherwise use the raw term itself
+        for substring in ALLERGEN_EXPANSIONS.get(term, [term]):
+            reject_terms.add(substring)
+
+    if not reject_terms:
+        return products  # nothing to filter
+
+    filtered: list = []
     for p in products:
         if not isinstance(p, dict):
             continue
-        name = str(p.get("name") or "").lower()
-        specs = str(p.get("specs") or "").lower()
-        category = str(p.get("category") or "").lower()
-        
-        has_allergen = False
-        for allergy in allergies_clean:
-            if not allergy:
-                continue
-            if allergy in name or allergy in specs or allergy in category:
-                has_allergen = True
-                print(f"Deterministic Filter: Excluded '{p.get('name')}' due to allergen '{allergy}'")
-                break
-        if not has_allergen:
+
+        # Aggregate all searchable text fields into one lower-case blob
+        searchable = " ".join([
+            str(p.get("name")        or ""),
+            str(p.get("description") or ""),   # ← added vs previous version
+            str(p.get("specs")       or ""),
+            str(p.get("category")    or ""),
+        ]).lower()
+
+        hit_term = next((t for t in reject_terms if t in searchable), None)
+        if hit_term:
+            print(f"[AllergenFilter] Dropped '{p.get('name')}' — matched term '{hit_term}' "
+                  f"(allergens: {sorted(recipient_allergies)})")
+        else:
             filtered.append(p)
+
     return filtered
 
 
@@ -195,52 +247,62 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
 
     # Fallback to broader queries if results are empty or very low (less than 3 items)
     if len(products) < 3:
-        fallback_queries = []
         sq_lower = search_query.lower()
         occ_lower = (occasion or "").lower()
 
-        # Check occasion-aware fallbacks first
-        for key, queries in OCCASION_FALLBACKS.items():
-            if key in sq_lower or key in occ_lower:
-                fallback_queries = queries
-                break
-        
-        # Generic gift/birthday fallback
-        if not fallback_queries:
-            if "birthday" in sq_lower or "anniversary" in sq_lower or "gift" in sq_lower:
-                fallback_queries = OCCASION_FALLBACKS["birthday"]
-            else:
+        # ── CATEGORY FIDELITY: only generate fallback queries that respect the
+        # user's explicit product category.  If the user asked for "flowers",
+        # fallback queries must also be flower-adjacent — never substitute cakes
+        # or chocolates.  A fallback is ONLY applied when the original query is
+        # genuinely vague (e.g. "birthday gift", "something nice").
+        GENERIC_TERMS = {"gift", "present", "surprise", "item", "something", "nice"}
+        query_is_specific = sq_lower not in GENERIC_TERMS and len(sq_lower.split()) <= 3
+
+        if query_is_specific:
+            # The user named a concrete product — retry the SAME query with
+            # broader pagination rather than switching to a different category.
+            fallback_queries: list[str] = [search_query]
+        else:
+            # Vague query — use occasion-aware fallback list
+            fallback_queries = []
+            for key, queries in OCCASION_FALLBACKS.items():
+                if key in sq_lower or key in occ_lower:
+                    fallback_queries = queries
+                    break
+            if not fallback_queries:
                 fallback_queries = OCCASION_FALLBACKS["default"]
         
         for fq in fallback_queries:
-            if fq != sq_lower:
-                try:
-                    print(f"Low results for '{search_query}'. Trying fallback search query: '{fq}'")
-                    fallback_res = await kapruka_search_products(fq, limit=CATALOG_SEARCH_TOP_K)
-                    fb_products = []
-                    if isinstance(fallback_res, dict):
-                        fb_products = fallback_res.get("products") or fallback_res.get("result") or []
-                    elif isinstance(fallback_res, list):
-                        fb_products = fallback_res
-                    
-                    if fb_products:
-                        fb_products = [p for p in fb_products if isinstance(p, dict)]
-                        if budget_limit is not None:
-                            fb_products = [p for p in fb_products if parse_product_price(p.get("price")) <= budget_limit]
-                        products.extend(fb_products)
-                        # Remove duplicates based on product ID
-                        seen = set()
-                        deduped = []
-                        for p in products:
-                            pid = p.get("id") or p.get("code")
-                            if pid not in seen:
-                                seen.add(pid)
-                                deduped.append(p)
-                        products = deduped
-                        if len(products) >= 5:
-                            break
-                except Exception as e:
-                    print(f"Fallback query '{fq}' failed: {e}")
+            if fq.lower() == sq_lower and fq == search_query:
+                # Same query already tried — skip to avoid infinite loop
+                continue
+            try:
+                print(f"Low results for '{search_query}'. Trying fallback search query: '{fq}'")
+                fallback_res = await kapruka_search_products(fq, limit=CATALOG_SEARCH_TOP_K)
+                fb_products = []
+                if isinstance(fallback_res, dict):
+                    fb_products = fallback_res.get("products") or fallback_res.get("result") or []
+                elif isinstance(fallback_res, list):
+                    fb_products = fallback_res
+                
+                if fb_products:
+                    fb_products = [p for p in fb_products if isinstance(p, dict)]
+                    if budget_limit is not None:
+                        fb_products = [p for p in fb_products if parse_product_price(p.get("price")) <= budget_limit]
+                    products.extend(fb_products)
+                    # Remove duplicates based on product ID
+                    seen: set = set()
+                    deduped: list = []
+                    for p in products:
+                        pid = p.get("id") or p.get("code")
+                        if pid not in seen:
+                            seen.add(pid)
+                            deduped.append(p)
+                    products = deduped
+                    if len(products) >= 5:
+                        break
+            except Exception as e:
+                print(f"Fallback query '{fq}' failed: {e}")
 
     if not products:
         yield "Sorry! I couldn't find any products matching your description on Kapruka right now."
@@ -273,6 +335,23 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
     
     # Sort by match score descending
     filtered_products.sort(key=lambda p: p.get("match_score", 0), reverse=True)
+
+    # ── PRE-EMIT HARD ALLERGEN GUARD ─────────────────────────────────────────
+    # Run a final unconditional allergen filter pass immediately before the
+    # <<PRODUCTS>> payload is sent to the frontend.  This is the last line of
+    # defence against any product that slipped through earlier processing
+    # (e.g. fallback queries that bypassed the first filter, or products whose
+    # description field was absent in the initial pass but is now populated).
+    if all_allergies_set:
+        pre_emit_count = len(filtered_products)
+        filtered_products = filter_allergens(filtered_products, all_allergies_set)
+        dropped = pre_emit_count - len(filtered_products)
+        if dropped:
+            print(f"[AllergenFilter] Pre-emit guard dropped {dropped} additional product(s).")
+        if not filtered_products:
+            yield ("I searched the catalog, but all matching products contained allergens "
+                   "you avoid. Could you try a different category?")
+            return
 
     # Yield filtered products as metadata token
     yield f"<<PRODUCTS>>:{json.dumps(filtered_products)}"

@@ -321,7 +321,7 @@ export default function RukiPage() {
           <button id="sidebar-toggle-btn-mobile" onClick={() => setLeftOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer md:hidden" aria-label="Open menu">
             <Menu className="h-5 w-5" />
           </button>
-          <img src="/ruki.png" alt="Kapruka Logo" className="h-10 w-auto object-contain select-none" />
+          <img src="/ruki.svg" alt="Kapruka Logo" className="h-10 w-auto object-contain select-none" />
         </div>
         <div className="flex items-center gap-1">
           <button
