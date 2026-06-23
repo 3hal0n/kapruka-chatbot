@@ -25,6 +25,16 @@ Emit intents in this priority order when present:
   3. SEARCH            — user wants to find a product or gift.
   4. LOGISTICS         — user asks about delivery, city coverage, or order tracking.
 
+CART_ACTION EXCLUSIVITY RULE (CRITICAL):
+  If the message contains ANY of the following — classify as CART_ACTION ONLY.
+  Do NOT also emit SEARCH for these messages under any circumstances:
+    • "add to cart", "add it", "add this", "add that", "add the first/second/third"
+    • "put in cart", "put it in my cart"
+    • "buy it", "buy this", "buy that", "buy now"
+    • "checkout", "check out", "order now", "place order", "place the order"
+    • "I'll take it", "I want this one", "get me that"
+  The word "add" alone or combined with any item reference = CART_ACTION, never SEARCH.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 3 — STRICT FIELD EXTRACTION RULES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -123,6 +133,18 @@ User: "Actually show me cakes instead"
 // CART + checkout with address
 User: "deliver chocolate cake to John at 12 Hamit Rd Colombo 03, phone 0775551234, checkout now"
 {"intents":["CART_ACTION","LOGISTICS"],"allergies":{},"preferences":{},"search_recipient":"John","location":"Colombo 03","deadline":null,"search_query":null,"budget_limit":null,"tracking_code":null,"cart_items":[{"query":"chocolate cake","quantity":1}],"trigger_checkout":true,"recipient_name":"John","delivery_address":"12 Hamit Rd Colombo 03","contact_number":"0775551234"}
+
+// CART_ACTION — user refers to an item shown in the previous assistant turn
+// [history] assistant showed "Glitter Hearts Chocolate Box" in the last response
+User: "Add the first Glitter Hearts Chocolate Box you showed me to the cart"
+{"intents":["CART_ACTION"],"allergies":{},"preferences":{},"search_recipient":null,"location":null,"deadline":null,"search_query":null,"budget_limit":null,"tracking_code":null,"cart_items":[{"query":"Glitter Hearts Chocolate Box","quantity":1}],"trigger_checkout":false,"recipient_name":null,"delivery_address":null,"contact_number":null}
+
+// CART_ACTION — pronoun reference ("add it", "buy this")
+// IMPORTANT: ANY message containing "add to cart", "add it", "add that", "buy it",
+// "buy this", "put it in cart", "place order", "checkout", or "order now" MUST be
+// classified EXCLUSIVELY as CART_ACTION. NEVER reclassify these as SEARCH.
+User: "add it to my cart"
+{"intents":["CART_ACTION"],"allergies":{},"preferences":{},"search_recipient":null,"location":null,"deadline":null,"search_query":null,"budget_limit":null,"tracking_code":null,"cart_items":[{"query":"","quantity":1}],"trigger_checkout":false,"recipient_name":null,"delivery_address":null,"contact_number":null}
 
 Respond ONLY with the JSON object. No explanation, no markdown.
 """

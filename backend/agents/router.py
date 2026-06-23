@@ -40,7 +40,135 @@ class Router:
         self.customer_id = customer_id
         self.st_memory = ShortTermMemory()
 
+    def _detect_cart_action(self, user_message: str) -> dict | None:
+        """
+        Pre-LLM regex interceptor for unambiguous cart/purchase commands.
+
+        If the message matches any known cart-action pattern, return a forced
+        CART_ACTION classification directly — no LLM call needed.  This prevents
+        the LLM from mis-routing explicit action phrases as SEARCH intents.
+
+        Returns a complete classification dict on match, or None to fall through
+        to the LLM classifier.
+        """
+        msg = user_message.strip().lower()
+
+        # Canonical cart-action trigger phrases — order matters (most specific first)
+        CART_PATTERNS = [
+            # Explicit "add X to [the/my] cart" — covers "to the cart", "to my cart", "to cart"
+            r"\badd\b.*\bto\s+(the\s+|my\s+)?cart\b",
+            r"\bput\b.*\binto?\s+(the\s+|my\s+)?cart\b",
+            r"\bplace\b.*\bin\s+(the\s+|my\s+)?cart\b",
+            # "add the first / add that / add it / add [name]"
+            r"\badd\s+(it|that|this|the\s+(first|second|third|top|last))\b",
+            # "buy this / buy it / buy that"
+            r"\bbuy\s+(it|this|that|the\s+(first|second|third|top|last))\b",
+            # "I'll take it / I want this one / get me that"
+            r"\bi'?ll?\s+take\s+(it|this|that)\b",
+            r"\bi\s+want\s+this\s+(one|item|product)\b",
+            r"\bget\s+me\s+(it|this|that)\b",
+            # "checkout / order now / place order"
+            r"\bcheckout\b",
+            r"\bcheck\s+out\b",
+            r"\bplace\s+(the\s+)?order\b",
+            r"\border\s+now\b",
+            r"\bbuy\s+now\b",
+        ]
+
+        import re as _re
+        for pattern in CART_PATTERNS:
+            if _re.search(pattern, msg):
+                print(f"[CartInterceptor] Forced CART_ACTION — matched pattern: '{pattern}'")
+                # Extract a product query from the message for the cart search.
+                # Try to pull a quoted product name or a noun phrase after "add"/"buy".
+                cart_query = self._extract_cart_query(user_message)
+                return {
+                    "intents": ["CART_ACTION"],
+                    "allergies": {},
+                    "preferences": {},
+                    "search_recipient": None,
+                    "location": None,
+                    "deadline": None,
+                    "search_query": None,
+                    "budget_limit": None,
+                    "tracking_code": None,
+                    "cart_items": [{"query": cart_query, "quantity": 1}] if cart_query else [],
+                    "trigger_checkout": bool(_re.search(r"\b(checkout|order\s+now|buy\s+now|place\s+(the\s+)?order)\b", msg)),
+                    "recipient_name": None,
+                    "delivery_address": None,
+                    "contact_number": None,
+                }
+        return None  # no intercept — let LLM classify
+
+    def _extract_cart_query(self, user_message: str) -> str:
+        """
+        Best-effort extraction of the product name from a cart-action message.
+
+        Priority order:
+        1. Quoted product name: 'add "Glitter Hearts Chocolate Box" to cart'
+        2. Noun phrase between add/buy verb and the cart/now/please terminus,
+           with "you showed me", "I saw", "the first/second" stripped out.
+        3. History fallback: scan st_memory for the last search_query blob.
+        """
+        import re as _re
+
+        # 1. Quoted product name
+        quoted = _re.search(r'["\']([^"\']{3,})["\']', user_message)
+        if quoted:
+            return quoted.group(1).strip()
+
+        # 2. Phrase extraction — capture between action verb and terminus
+        phrase_match = _re.search(
+            r'\b(?:add|buy|put|get\s+me)\s+(?:the\s+)?(?:first\s+)?(.+?)'
+            r'(?:\s+(?:to\s+(?:the\s+|my\s+)?cart|you\s+showed\s+me|i\s+saw|now|please))',
+            user_message, _re.IGNORECASE
+        )
+        if not phrase_match:
+            # Fallback: grab everything after "add/buy" and before common suffixes
+            phrase_match = _re.search(
+                r'\b(?:add|buy)\s+(?:the\s+)?(?:first\s+)?(.+?)(?:\s+to\b|$)',
+                user_message, _re.IGNORECASE
+            )
+
+        if phrase_match:
+            candidate = phrase_match.group(1).strip()
+            # Clean noise phrases that leaked in
+            for noise in ("you showed me", "i saw earlier", "that you showed",
+                          "from before", "the first one", "the one"):
+                candidate = _re.sub(_re.escape(noise), "", candidate, flags=_re.IGNORECASE).strip()
+            # Reject bare pronouns / position words
+            PRONOUNS = {"it", "this", "that", "the first", "the second",
+                        "the third", "the top", "the last", "one", ""}
+            if candidate.lower() not in PRONOUNS and len(candidate) > 2:
+                return candidate
+
+        # 3. History fallback — use the last search_query from prior classifications
+        history = self.st_memory.get_history()
+        for msg in reversed(history):
+            content = msg.get("content", "")
+            try:
+                start_idx = content.find("{")
+                end_idx = content.rfind("}") + 1
+                if start_idx != -1 and end_idx > start_idx:
+                    blob = json.loads(content[start_idx:end_idx])
+                    sq = blob.get("search_query")
+                    if sq and isinstance(sq, str):
+                        return sq
+            except (json.JSONDecodeError, Exception):
+                pass
+
+        return ""
+
     def classify_intents(self, user_message: str) -> dict:
+
+        # ── Pre-LLM cart-action interceptor ───────────────────────────────────
+        # Catches unambiguous action phrases ("add to cart", "buy it", "checkout")
+        # and returns a forced CART_ACTION classification without an LLM call.
+        # The _enrich_from_history step in route_stream will backfill allergies,
+        # location and budget from prior turns afterwards.
+        intercepted = self._detect_cart_action(user_message)
+        if intercepted is not None:
+            return intercepted
 
         history = self.st_memory.get_history()
         messages = history + [{"role": "user", "content": user_message}]
@@ -216,6 +344,15 @@ class Router:
         print(f"Effective budget_limit : {budget_limit}")
 
         intents = classification.get("intents", ["SEARCH"])
+
+        # ── CART_ACTION exclusivity enforcement ───────────────────────────────
+        # If the LLM (not the interceptor) returned both CART_ACTION and SEARCH,
+        # drop SEARCH. An action turn must never also spawn a product discovery
+        # loop — that causes duplicate carousels and breaks cart UX.
+        if "CART_ACTION" in intents and "SEARCH" in intents:
+            intents = [i for i in intents if i != "SEARCH"]
+            classification["intents"] = intents
+            print("[Router] Stripped SEARCH from CART_ACTION turn.")
 
         print(f"Customer        : {self.customer_id}")
         print(f"Router Decision : {intents}")

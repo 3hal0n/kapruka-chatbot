@@ -54,9 +54,16 @@ function EmptyStateIllustration({ theme }: { theme: "light" | "dark" }) {
 const isNoMatchesOrError = (msg: Message): boolean => {
   if (msg.sender !== "ai") return false;
   if (msg.isError) return true;
+
+  // Never show the empty-state card on action turns (cart add, checkout, etc.)
+  // These turns have text like "Done! I've added X to your cart." with no products,
+  // which would otherwise incorrectly trigger the empty-state illustration.
+  const intents = msg.intents || [];
+  if (intents.includes("CART_ACTION")) return false;
+  if (intents.includes("LOGISTICS") && !intents.includes("SEARCH")) return false;
   
   // If the intent is SEARCH and there are no products
-  if (msg.intents?.includes("SEARCH") && (!msg.products || msg.products.length === 0)) {
+  if (intents.includes("SEARCH") && (!msg.products || msg.products.length === 0)) {
     return true;
   }
   
@@ -250,7 +257,10 @@ export default function RukiPage() {
       if (!resp.ok || !resp.body) throw new Error("SSE error");
 
       const reader = resp.body.getReader(); const dec = new TextDecoder("utf-8");
+      // Reset all per-turn accumulators — critical to prevent stale products
+      // from a prior SEARCH turn leaking into a CART_ACTION response.
       let buf = "", fullText = "", sseIntents: string[] = [], sseProducts: Product[] = [], sseLatency = 0, hasError = false;
+      let isCartActionTurn = false; // tracks whether this turn is purely an action turn
 
       while (true) {
         const { value, done } = await reader.read(); if (done) break;
@@ -266,7 +276,12 @@ export default function RukiPage() {
           if (!dv) continue;
           try {
             const p = JSON.parse(dv);
-            if (ev === "intent_badge") { sseIntents = p.intents || []; setCurrentIntents(sseIntents); }
+            if (ev === "intent_badge") {
+              sseIntents = p.intents || [];
+              setCurrentIntents(sseIntents);
+              // Mark this as a pure action turn so we suppress carousel render
+              isCartActionTurn = sseIntents.includes("CART_ACTION") && !sseIntents.includes("SEARCH");
+            }
             else if (ev === "status") {
               setCurrentStatus(p.message || "");
               // Show a memory toast when preferences are being saved
@@ -276,7 +291,10 @@ export default function RukiPage() {
             }
             else if (ev === "text") { setIsTyping(false); fullText += p.text || ""; setStreamedText(fullText); }
             else if (ev === "product_carousel") {
-              if (p.type === "[PRODUCT_CAROUSEL_DATA]" || p.products) {
+              // Only accumulate carousel products on SEARCH turns.
+              // On CART_ACTION turns the backend never yields <<PRODUCTS>>,
+              // but guard here too in case of unexpected ordering.
+              if (!isCartActionTurn && (p.type === "[PRODUCT_CAROUSEL_DATA]" || p.products)) {
                 sseProducts = p.products || [];
               }
             }
@@ -289,10 +307,12 @@ export default function RukiPage() {
               if (p.delivery_address) setOrderAddress(p.delivery_address);
               if (p.contact_number) setOrderPhone(p.contact_number);
               if (p.trigger_checkout) {
-                setTimeout(() => {
-                  handleCreateOrderLink();
-                }, 300);
+                setTimeout(() => { handleCreateOrderLink(); }, 300);
               }
+              // A cart_update payload is an action frame — clear status spinner
+              // immediately so the UI doesn't sit on "Analyzing context..."
+              setCurrentStatus(null);
+              setIsTyping(false);
             }
             else if (ev === "latency") sseLatency = p.latency || 0;
             else if (ev === "error") { hasError = true; }
@@ -300,7 +320,9 @@ export default function RukiPage() {
         }
       }
       const aiText = fullText || (hasError ? "A stream error occurred while fetching catalog items." : "I searched Kapruka but couldn't find matching results.");
-      setMessages(prev => [...prev, { id: `ai-${Date.now()}`, sender: "ai", text: aiText, intents: sseIntents, products: sseProducts.length > 0 ? sseProducts : undefined, latency: sseLatency, isError: hasError }]);
+      // On CART_ACTION turns: never attach products (they were added to cart, not shown as carousel)
+      const productsToAttach = isCartActionTurn ? undefined : (sseProducts.length > 0 ? sseProducts : undefined);
+      setMessages(prev => [...prev, { id: `ai-${Date.now()}`, sender: "ai", text: aiText, intents: sseIntents, products: productsToAttach, latency: sseLatency, isError: hasError }]);
       speakResponse(aiText);
     } catch {
       // Offline fallback — no mock products shown

@@ -89,36 +89,36 @@ def filter_allergens(products: list, recipient_allergies: set) -> list:
     """
     Deterministic allergen filter — runs BEFORE any LLM call.
 
-    For each allergen term supplied, the function expands it to a set of
-    semantically-related substrings covering common naming variants
-    (e.g. "nuts" expands to nut, cashew, almond, peanut, pistachio …).
-    It then case-insensitively scans four product fields: name, description,
-    specs, and category.  Any product matching at least one allergen substring
-    in any field is dropped and logged.
+    Uses word-boundary matching (not raw substring) to prevent false positives
+    on words like "coconut", "donut", "natural", or "fortune cookie" that contain
+    the substring "nut" but are not tree-nut allergens.
+
+    For each allergen term, expands to a full synonym set and checks four
+    product fields: name, description, specs, category.
     """
 
     # ── Allergen term expansion map ────────────────────────────────────────────
-    # Keys are canonical allergen names (lower-case); values are substrings to
-    # match anywhere in a product string.  Add more entries as needed.
     ALLERGEN_EXPANSIONS: dict[str, list[str]] = {
-        "nuts":        ["nut", "cashew", "almond", "peanut", "pistachio",
-                        "walnut", "hazelnut", "pecan", "macadamia", "praline"],
-        "nut":         ["nut", "cashew", "almond", "peanut", "pistachio",
-                        "walnut", "hazelnut", "pecan", "macadamia", "praline"],
-        "peanut":      ["peanut", "groundnut", "monkey nut"],
-        "peanuts":     ["peanut", "groundnut", "monkey nut"],
-        "cashew":      ["cashew"],
-        "almond":      ["almond"],
-        "pistachio":   ["pistachio"],
-        "walnut":      ["walnut"],
-        "hazelnut":    ["hazelnut", "nutella"],
+        "nuts":        ["nut", "nuts", "cashew", "almond", "peanut", "peanuts",
+                        "pistachio", "walnut", "hazelnut", "pecan", "macadamia",
+                        "praline", "mixed nut", "nut mix"],
+        "nut":         ["nut", "nuts", "cashew", "almond", "peanut", "peanuts",
+                        "pistachio", "walnut", "hazelnut", "pecan", "macadamia",
+                        "praline", "mixed nut", "nut mix"],
+        "peanut":      ["peanut", "peanuts", "groundnut", "monkey nut"],
+        "peanuts":     ["peanut", "peanuts", "groundnut", "monkey nut"],
+        "cashew":      ["cashew", "cashews"],
+        "almond":      ["almond", "almonds"],
+        "pistachio":   ["pistachio", "pistachios"],
+        "walnut":      ["walnut", "walnuts"],
+        "hazelnut":    ["hazelnut", "hazelnuts", "nutella"],
         "gluten":      ["gluten", "wheat", "barley", "rye", "flour"],
         "dairy":       ["milk", "cream", "butter", "cheese", "lactose", "whey",
                         "casein", "dairy"],
         "milk":        ["milk", "cream", "butter", "cheese", "lactose", "whey",
                         "casein", "dairy"],
-        "egg":         ["egg"],
-        "eggs":        ["egg"],
+        "egg":         ["egg", "eggs"],
+        "eggs":        ["egg", "eggs"],
         "soy":         ["soy", "soya", "tofu"],
         "seafood":     ["prawn", "shrimp", "crab", "lobster", "fish", "salmon",
                         "tuna", "anchovy", "seafood", "shellfish"],
@@ -126,35 +126,66 @@ def filter_allergens(products: list, recipient_allergies: set) -> list:
         "chocolate":   ["chocolate", "cocoa", "cacao"],
     }
 
-    # Build the flat list of substrings to reject, from all supplied allergens
+    # ── Terms that are SAFE false-positive substrings — never reject on these alone
+    # e.g. "coconut" contains "nut" but is not a tree nut allergen
+    NUT_FALSE_POSITIVES = {"coconut", "doughnut", "donut", "minute", "natural",
+                           "fortunate", "fortune", "peanut butter cookie",
+                           "chestnut"}  # chestnut is debated; keep in safe list
+
+    # Build the flat set of word-boundary patterns to reject
     reject_terms: set[str] = set()
     for raw_allergen in recipient_allergies:
         term = str(raw_allergen).strip().lower()
         if not term:
             continue
-        # Use the expansion if available; otherwise use the raw term itself
         for substring in ALLERGEN_EXPANSIONS.get(term, [term]):
             reject_terms.add(substring)
 
     if not reject_terms:
         return products  # nothing to filter
 
+    # Pre-compile word-boundary patterns for efficiency
+    import re as _re
+    compiled: list[tuple[str, "_re.Pattern"]] = []
+    for t in reject_terms:
+        # Use word boundary so "nut" matches "nut" and "nuts" but NOT "coconut"
+        pattern = _re.compile(r'\b' + _re.escape(t) + r'\b', _re.IGNORECASE)
+        compiled.append((t, pattern))
+
     filtered: list = []
     for p in products:
         if not isinstance(p, dict):
             continue
 
-        # Aggregate all searchable text fields into one lower-case blob
-        searchable = " ".join([
+        # Aggregate all searchable text fields into one blob
+        raw_searchable = " ".join([
             str(p.get("name")        or ""),
-            str(p.get("description") or ""),   # ← added vs previous version
+            str(p.get("description") or ""),
             str(p.get("specs")       or ""),
             str(p.get("category")    or ""),
-        ]).lower()
+        ])
+        searchable_lower = raw_searchable.lower()
 
-        hit_term = next((t for t in reject_terms if t in searchable), None)
+        # Check for false-positive product types first
+        is_false_positive = any(fp in searchable_lower for fp in NUT_FALSE_POSITIVES)
+
+        hit_term = None
+        for term, pattern in compiled:
+            # Skip if this specific term is a false-positive match
+            if term in ("nut", "nuts") and is_false_positive:
+                # Deeper check: if name/desc contains coconut/donut but NOT other nut types
+                other_nuts = {"cashew", "almond", "peanut", "pistachio", "walnut",
+                              "hazelnut", "pecan", "macadamia", "praline"}
+                has_other = any(on in searchable_lower for on in other_nuts)
+                if not has_other:
+                    continue  # skip the nut/nuts pattern — false positive
+
+            if pattern.search(raw_searchable):
+                hit_term = term
+                break
+
         if hit_term:
-            print(f"[AllergenFilter] Dropped '{p.get('name')}' — matched term '{hit_term}' "
+            print(f"[AllergenFilter] Dropped '{p.get('name')}' — word-boundary match '{hit_term}' "
                   f"(allergens: {sorted(recipient_allergies)})")
         else:
             filtered.append(p)
@@ -213,9 +244,94 @@ def calculate_match_score(product: dict, search_query: str, preferences: set, bu
     return min(score, 99)
 
 
+def _sanitise_search_query(query: str) -> str:
+    """
+    Clean a search query before it is sent to the Kapruka MCP server.
+
+    Operations (in order):
+    1. Translate known Sinhala/Singlish product words to their English equivalents.
+    2. Strip location noise tokens that can bleed in from mixed-script sentences
+       (e.g. "walata", "kiyana", "welin", "side", "area", "district").
+    3. Remove trailing punctuation, collapse whitespace, lowercase.
+    4. Truncate to 60 chars so the MCP query string stays clean.
+    """
+    if not query:
+        return "gift"
+
+    # ── Sinhala/Singlish → English product keyword map ────────────────────────
+    # Keys are raw tokens (lower-case) that may arrive from the router.
+    SINHALA_TO_EN: dict[str, str] = {
+        # Flowers / plants
+        "mal":          "flowers",
+        "mala":         "flowers",
+        "pushpa":       "flowers",
+        "rose":         "roses",
+        "mal pettiya":  "flowers",
+        # Cakes / sweets
+        "케이크":        "cake",
+        "cake ekak":    "cake",
+        "birthday cake ekak": "birthday cake",
+        "kavili":       "sweets",
+        "kiri piti":    "milk sweets",
+        # Chocolates
+        "choco":        "chocolate",
+        "chocolates":   "chocolate",
+        # Gifts / hampers
+        "gift ekak":    "gift",
+        "hadanna":      "gift",   # "make/find" — treat as generic gift search
+        "thohfe":       "gift",
+        # Food / fruits
+        "pala thiththa": "fruit basket",
+        "amba":         "mango",
+        # Jewellery / accessories
+        "necklace ekak": "necklace",
+        "bag ekak":     "bag",
+    }
+
+    # Location noise words to strip (these are NOT product keywords)
+    LOCATION_NOISE = {
+        "walata", "welin", "kiyana", "side", "area", "district",
+        "deliver", "delivery", "karanna", "puluwanda", "thiyenawa",
+        "ekak", "hadanna", "enna", "oni", "wenne", "nehe",
+        "for", "to", "from", "the", "a", "an",
+    }
+
+    q = query.strip()
+
+    # 1. Multi-word phrase replacements first (longest match wins)
+    q_lower = q.lower()
+    for sinhala_phrase, english_kw in sorted(SINHALA_TO_EN.items(), key=lambda x: -len(x[0])):
+        if sinhala_phrase in q_lower:
+            q = english_kw
+            q_lower = q.lower()
+            break  # one replacement is enough
+
+    # 2. Strip individual noise tokens
+    tokens = q.split()
+    cleaned_tokens = [t for t in tokens if t.lower().strip(".,!?") not in LOCATION_NOISE]
+    q = " ".join(cleaned_tokens).strip() if cleaned_tokens else q
+
+    # 3. Remove trailing punctuation and collapse whitespace
+    q = re.sub(r'[^\w\s\-]', ' ', q)
+    q = re.sub(r'\s+', ' ', q).strip()
+
+    # 4. Truncate
+    q = q[:60]
+
+    # 5. Final fallback — if nothing remains, return "gift"
+    return q if q else "gift"
+
+
 async def run_stream(recipients: set, search_query: str, old_profile: dict, new_profile: dict, query_vector: list = None, budget_limit: float = None, occasion: str = None):
     from infrastructure.mcp.client import kapruka_search_products
     import asyncio
+
+    # ── QUERY SANITISATION ────────────────────────────────────────────────────
+    # Normalise the search_query before hitting the MCP server.
+    # 1. Strip location noise tokens that sometimes leak from Sinhala/Singlish.
+    # 2. Translate common Sinhala product terms to English MCP-indexed keywords.
+    # 3. Collapse whitespace and lowercase.
+    search_query = _sanitise_search_query(search_query)
 
     # Search live products using the Kapruka MCP Client wrapper
     try:
@@ -319,6 +435,15 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
         location[res]    = old_profile.get("location", {}).get(res, "") or new_profile.get("location", {}).get(res, "")
         all_allergies_set.update(allergies[res])
 
+    # ── ALLERGEN SAFETY NET ───────────────────────────────────────────────────
+    # Layer 1: profile dicts (persisted + context overrides)
+    for profile_dict in (old_profile, new_profile):
+        for _, allergen_list in (profile_dict.get("allergies") or {}).items():
+            if isinstance(allergen_list, (list, set)):
+                all_allergies_set.update(str(a).strip().lower() for a in allergen_list if a)
+
+    print(f"[AllergenFilter] Active allergen set for this request: {sorted(all_allergies_set) or 'none'}")
+
     # Rule-based deterministic allergen filtering
     filtered_products = filter_allergens(products, all_allergies_set)
     if not filtered_products:
@@ -351,6 +476,25 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
         if not filtered_products:
             yield ("I searched the catalog, but all matching products contained allergens "
                    "you avoid. Could you try a different category?")
+            return
+
+    # ── PRE-EMIT HARD PRICE GUARD ─────────────────────────────────────────────
+    # Final unconditional price clamp before <<PRODUCTS>> is emitted.
+    # Guarantees zero over-budget items reach the frontend regardless of which
+    # code path added them (initial fetch, fallback queries, allergen-filtered pool).
+    if budget_limit is not None:
+        pre_price_count = len(filtered_products)
+        filtered_products = [
+            p for p in filtered_products
+            if parse_product_price(p.get("price")) <= budget_limit
+        ]
+        price_dropped = pre_price_count - len(filtered_products)
+        if price_dropped:
+            print(f"[PriceFilter] Pre-emit guard dropped {price_dropped} over-budget product(s) "
+                  f"(limit: LKR {budget_limit}).")
+        if not filtered_products:
+            yield (f"I couldn't find any products under LKR {int(budget_limit)} matching your search. "
+                   f"Try raising your budget or searching a different category!")
             return
 
     # Yield filtered products as metadata token
