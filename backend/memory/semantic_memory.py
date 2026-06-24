@@ -1,8 +1,10 @@
 import json
 import os
+import threading
 from pathlib import Path
 
 _DEFAULT_PATH = str(Path(__file__).resolve().parents[1] / "data" / "recipient_profiles.json")
+_write_lock = threading.Lock()  # Protect concurrent JSON writes from daemon threads
 
 
 class SemanticMemory:
@@ -30,8 +32,9 @@ class SemanticMemory:
             print("No profiles found. Starting fresh.")
 
     def save(self):
-        with open(self.filepath, "w") as f:
-            json.dump(self.profiles, f, indent=2)
+        with _write_lock:
+            with open(self.filepath, "w") as f:
+                json.dump(self.profiles, f, indent=2)
         print(f"Profiles saved to {self.filepath}")
 
     def add_or_update_profile(self, customer_id: str, name: str, allergies: list = [], preferences: list = [], location: str = ""):

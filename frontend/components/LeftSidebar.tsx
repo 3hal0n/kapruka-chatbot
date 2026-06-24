@@ -67,14 +67,11 @@ export function LeftSidebar({
 }: LeftSidebarProps) {
   const content = (
     <div className="flex h-full w-[260px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-background p-4 select-none">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl tracking-tight leading-none select-none">
-          <span className="font-extrabold text-foreground">Kapruka</span> <span className="font-black" style={{ color: "#FFD700" }}>Ruki</span>
-        </h1>
+      <div className="flex items-center justify-end md:hidden">
         <button 
           id="sidebar-close-btn-mobile"
           onClick={onClose} 
-          className="md:hidden grid h-9 w-9 place-items-center rounded-xl transition-all duration-300 hover:bg-muted"
+          className="grid h-9 w-9 place-items-center rounded-xl transition-all duration-300 hover:bg-muted"
         >
           <X className="h-5 w-5" />
         </button>

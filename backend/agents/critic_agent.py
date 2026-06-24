@@ -53,6 +53,7 @@ async def critique(
         max_tokens=CLAUDE_MAX_TOKENS_CRITIQUE,
         model=CLAUDE_MODEL,
         json_mode=True,
+        temperature=0.1,  # strict audit — low temperature
     )
     clean = raw.strip()
     start = clean.find("{")

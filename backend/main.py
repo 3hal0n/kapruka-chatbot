@@ -26,6 +26,21 @@ logger = logging.getLogger("kapruka-fastapi")
 router_sessions: Dict[str, Router] = {}
 
 
+import re
+
+def parse_budget_limit(msg: str) -> Optional[float]:
+    """Parse numeric budget limit from user message (e.g. under 5000, less than 5,000)."""
+    pattern = r'(?:under|below|less\s+than|budget\s+of|budget|max|maximum|up\s+to)\s*(?:rs\.?|lkr)?\s*([\d,]+)'
+    match = re.search(pattern, msg, re.IGNORECASE)
+    if match:
+        num_str = match.group(1).replace(",", "")
+        try:
+            return float(num_str)
+        except ValueError:
+            pass
+    return None
+
+
 def get_router(user_id: str) -> Router:
     """Retrieve or initialize the Router instance for a given user_id."""
     clean_id = user_id.strip()
@@ -106,6 +121,7 @@ class OrderRequest(BaseModel):
     delivery_address: str
     contact_number: str
     city: Optional[str] = "Colombo"
+    gift_message: Optional[str] = None
 
 
 @app.post("/api/chat")
@@ -122,10 +138,18 @@ async def chat_endpoint(request: ChatRequest):
 
     router = get_router(request.user_id)
 
+    # Extract budget limit
+    budget_limit = parse_budget_limit(request.message)
+    if budget_limit is None and request.budget:
+        budget_limit = parse_budget_limit(request.budget)
+        
+    if budget_limit is not None:
+        logger.info(f"Detected budget limit: Rs. {budget_limit}")
+
     async def sse_generator():
         start_time = time.time()
         try:
-            async for chunk in router.route_stream(request.message, request.recipient_context):
+            async for chunk in router.route_stream(request.message, request.recipient_context, budget_limit=budget_limit):
                 # 1. Classification event
                 if isinstance(chunk, str) and chunk.startswith("<<CLASSIFICATION>>:"):
                     try:
@@ -152,6 +176,19 @@ async def chat_endpoint(request: ChatRequest):
                         yield f"event: product_carousel\ndata: {json.dumps(payload)}\n\n"
                     except Exception as e:
                         logger.error(f"Failed parsing products JSON: {e}")
+
+                # 2.5. Cart Update event
+                elif isinstance(chunk, str) and chunk.startswith("<<CART_UPDATE>>:"):
+                    try:
+                        raw_data = chunk.split("<<CART_UPDATE>>:", 1)[1]
+                        cart_data = json.loads(raw_data)
+                        payload = {
+                            "type": "[CART_UPDATE]",
+                            **cart_data
+                        }
+                        yield f"event: cart_update\ndata: {json.dumps(payload)}\n\n"
+                    except Exception as e:
+                        logger.error(f"Failed parsing cart update JSON: {e}")
 
                 # 3. Preference Saving Status event
                 elif chunk == "<<PREF_SAVING>>":
@@ -280,7 +317,19 @@ async def create_order_endpoint(request: OrderRequest):
     try:
         from infrastructure.mcp.client import kapruka_create_order
 
-        # Use first cart item as primary product (Kapruka creates one order per product)
+        # Build full cart array for multi-item orders
+        cart_payload = [
+            {
+                "product_id": item.id,
+                "quantity": item.quantity,
+                "name": item.name,
+                "price": item.price,
+            }
+            for item in request.cart
+        ]
+
+        # Use first cart item as primary product_id for compatibility,
+        # but pass the full cart array for multi-item checkout support
         first_item = request.cart[0]
         result = await kapruka_create_order(
             product_id=first_item.id,
@@ -288,6 +337,8 @@ async def create_order_endpoint(request: OrderRequest):
             recipient_name=request.recipient_name,
             delivery_address=request.delivery_address,
             contact_number=request.contact_number,
+            gift_message=request.gift_message,
+            cart=cart_payload,
         )
         logger.info(f"kapruka_create_order result: {result}")
 

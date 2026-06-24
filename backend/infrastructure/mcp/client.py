@@ -326,10 +326,50 @@ async def _execute_mcp_tool(tool_name: str, arguments: dict) -> Any:
         return {"result": text_data}
 
 
+# TTL-aware in-memory cache for MCP tool calls (aligned with Kapruka's 30-min cache policy)
+_CACHE_TTL_SECONDS = 1800  # 30 minutes
+
+class _TTLCache:
+    """Simple time-to-live cache to prevent unbounded growth and stale data."""
+    def __init__(self, ttl: int = _CACHE_TTL_SECONDS):
+        self._store: dict = {}
+        self._ttl = ttl
+
+    def get(self, key):
+        entry = self._store.get(key)
+        if entry and (time.time() - entry["ts"]) < self._ttl:
+            return entry["value"]
+        if entry:
+            del self._store[key]  # evict expired entry
+        return None
+
+    def set(self, key, value):
+        self._store[key] = {"value": value, "ts": time.time()}
+
+    def __contains__(self, key):
+        return self.get(key) is not None
+
+    def __getitem__(self, key):
+        return self.get(key)
+
+    def __setitem__(self, key, value):
+        self.set(key, value)
+
+
+PRODUCT_SEARCH_CACHE = _TTLCache()
+PRODUCT_GET_CACHE = _TTLCache()
+DELIVERY_CHECK_CACHE = _TTLCache(ttl=900)  # 15 min for delivery info (more dynamic)
+
+
 # ── Typed Wrapper Functions for the 7 Kapruka Tools ──────────────────────────
 
 async def kapruka_search_products(query: str, limit: Optional[int] = None) -> dict:
     """Search Kapruka product catalog."""
+    cache_key = (query, limit)
+    if cache_key in PRODUCT_SEARCH_CACHE:
+        logger.info(f"Returning cached product search results for: {cache_key}")
+        return PRODUCT_SEARCH_CACHE[cache_key]
+
     params = {"q": query, "response_format": "json"}
     if limit is not None:
         params["limit"] = limit
@@ -354,12 +394,19 @@ async def kapruka_search_products(query: str, limit: Optional[int] = None) -> di
                 "checkout_ready": p.get("in_stock", True)
             }
             mapped_products.append(mapped_p)
-        return {"products": mapped_products, "result": mapped_products}
+        final_res = {"products": mapped_products, "result": mapped_products}
+        PRODUCT_SEARCH_CACHE[cache_key] = final_res
+        return final_res
+    PRODUCT_SEARCH_CACHE[cache_key] = res
     return res
 
 
 async def kapruka_get_product(product_id: str) -> dict:
     """Retrieve detailed product specifications."""
+    if product_id in PRODUCT_GET_CACHE:
+        logger.info(f"Returning cached product details for ID: {product_id}")
+        return PRODUCT_GET_CACHE[product_id]
+
     params = {"product_id": product_id, "response_format": "json"}
     args = {"params": params}
     res = await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_get_product", args)
@@ -374,6 +421,7 @@ async def kapruka_get_product(product_id: str) -> dict:
         res["stock"] = "In Stock" if res.get("in_stock") else "Out of Stock"
         res["category"] = cat_name
         res["checkout_ready"] = res.get("in_stock", True)
+    PRODUCT_GET_CACHE[product_id] = res
     return res
 
 
@@ -399,8 +447,16 @@ async def kapruka_list_delivery_cities(query: Optional[str] = None) -> dict:
 
 async def kapruka_check_delivery(city: str) -> dict:
     """Check delivery availability and timing tier for a location."""
+    city_clean = city.strip().lower()
+    if city_clean in DELIVERY_CHECK_CACHE:
+        logger.info(f"Returning cached delivery feasibility for: {city_clean}")
+        return DELIVERY_CHECK_CACHE[city_clean]
+
     args = {"params": {"city": city, "response_format": "json"}}
-    return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_check_delivery", args)
+    res = await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_check_delivery", args)
+    DELIVERY_CHECK_CACHE[city_clean] = res
+    return res
+
 
 
 async def kapruka_create_order(
@@ -408,9 +464,11 @@ async def kapruka_create_order(
     quantity: int,
     recipient_name: str,
     delivery_address: str,
-    contact_number: str
+    contact_number: str,
+    gift_message: str = None,
+    cart: list = None,
 ) -> dict:
-    """Place a new gift order on Kapruka."""
+    """Place a new gift order on Kapruka. Supports multi-item carts and gift messages."""
     import datetime
     
     # Try to extract city from delivery_address
@@ -431,14 +489,19 @@ async def kapruka_create_order(
             break
             
     tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+
+    # Build cart array — use provided full cart if available, else single item
+    if cart and len(cart) > 0:
+        cart_payload = [
+            {"product_id": str(item.get("product_id") or item.get("id") or product_id),
+             "quantity": int(item.get("quantity", 1))}
+            for item in cart
+        ]
+    else:
+        cart_payload = [{"product_id": product_id, "quantity": quantity}]
     
     params = {
-        "cart": [
-            {
-                "product_id": product_id,
-                "quantity": quantity
-            }
-        ],
+        "cart": cart_payload,
         "recipient": {
             "name": recipient_name,
             "phone": contact_number
@@ -453,6 +516,10 @@ async def kapruka_create_order(
         },
         "response_format": "json"
     }
+
+    # Add gift message if provided (bonus points feature)
+    if gift_message and gift_message.strip():
+        params["gift_message"] = gift_message.strip()
     
     args = {"params": params}
     return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_create_order", args)
