@@ -314,7 +314,7 @@ class Router:
 
         return classification
 
-    async def route_stream(self, user_message: str, recipient_context: dict | None = None, budget_limit: float | None = None):
+    async def route_stream(self, user_message: str, recipient_context: dict | None = None, budget_limit: float | None = None, vibe_check: str | None = None):
         """Streaming version of route() — yields chunks for SEARCH responses."""
         import asyncio
 
@@ -531,6 +531,7 @@ class Router:
                 budget_limit=budget_limit,
                 occasion=classification.get("occasion") or (recipient_context or {}).get("occasion"),
                 user_raw_message=user_message,
+                vibe_check=vibe_check,
             ):
                 if chunk != "<<CLEAR>>":
                     full_response_chunks.append(chunk)

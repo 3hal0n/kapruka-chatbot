@@ -100,6 +100,22 @@ class ChatRequest(BaseModel):
     budget: Optional[str] = None
     recipient: Optional[str] = None
     occasion: Optional[str] = None
+    vibe_check: Optional[str] = None
+
+
+class GroupGiftItem(BaseModel):
+    id: str
+    name: str
+    price: float
+    quantity: int
+    image_url: Optional[str] = None
+
+
+class GroupGiftRequest(BaseModel):
+    cart: list[GroupGiftItem]
+    subtotal: float
+    total: float
+    currency: str = "LKR"
 
 
 class ResetRequest(BaseModel):
@@ -149,7 +165,7 @@ async def chat_endpoint(request: ChatRequest):
     async def sse_generator():
         start_time = time.time()
         try:
-            async for chunk in router.route_stream(request.message, request.recipient_context, budget_limit=budget_limit):
+            async for chunk in router.route_stream(request.message, request.recipient_context, budget_limit=budget_limit, vibe_check=request.vibe_check):
                 # 1. Classification event
                 if isinstance(chunk, str) and chunk.startswith("<<CLASSIFICATION>>:"):
                     try:
@@ -379,6 +395,33 @@ async def create_order_endpoint(request: OrderRequest):
             "checkout_url": fallback_url,
             "message": "Order submitted (offline fallback)."
         }
+
+
+@app.post("/api/group-gift/create")
+async def create_group_gift(request: GroupGiftRequest):
+    """
+    Serializes the current cart into a base64 group-gift token.
+    Returns the opaque token; the frontend assembles the full shareable URL
+    so the backend never needs to know its own public hostname.
+    """
+    import base64
+
+    payload = {
+        "cart": [item.model_dump() for item in request.cart],
+        "subtotal": request.subtotal,
+        "total": request.total,
+        "currency": request.currency,
+        "gift_id": f"GG-{int(time.time())}",
+        "created_at": int(time.time()),
+    }
+    token = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+
+    return {
+        "token": token,
+        "gift_id": payload["gift_id"],
+        "item_count": len(request.cart),
+        "total": request.total,
+    }
 
 
 @app.get("/health")

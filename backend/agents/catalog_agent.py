@@ -322,7 +322,7 @@ def _sanitise_search_query(query: str) -> str:
     return q if q else "gift"
 
 
-async def run_stream(recipients: set, search_query: str, old_profile: dict, new_profile: dict, query_vector: list = None, budget_limit: float = None, occasion: str = None, user_raw_message: str = ""):
+async def run_stream(recipients: set, search_query: str, old_profile: dict, new_profile: dict, query_vector: list = None, budget_limit: float = None, occasion: str = None, user_raw_message: str = "", vibe_check: str = None):
     from infrastructure.mcp.client import kapruka_search_products
     import asyncio
 
@@ -567,6 +567,14 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
     if all_preferences_set:
         pref_names = ", ".join(sorted(all_preferences_set))
         context_notes.append(f"Known preferences: {pref_names} — mention them naturally if relevant")
+
+    if vibe_check and vibe_check.strip():
+        context_notes.append(
+            f"Recipient vibe/personality: {vibe_check.strip()} — "
+            "You MUST explicitly state in 1-2 sentences WHY each product you recommend suits this specific "
+            "personality. Reference their traits directly (e.g. 'Since they love coding late into the night, "
+            "this [product] is perfect because...'). Do not be generic — connect the product to the vibe."
+        )
 
     context_block = "\n".join(context_notes) if context_notes else ""
 
