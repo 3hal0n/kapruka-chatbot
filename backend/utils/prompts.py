@@ -32,8 +32,12 @@ CART_ACTION EXCLUSIVITY RULE (CRITICAL):
     • "put in cart", "put it in my cart"
     • "buy it", "buy this", "buy that", "buy now"
     • "checkout", "check out", "order now", "place order", "place the order"
+    • "proceed to buy", "proceed to checkout", "let's checkout"
     • "I'll take it", "I want this one", "get me that"
   The word "add" alone or combined with any item reference = CART_ACTION, never SEARCH.
+  EXCEPTION: If the message ALSO asks to find/search/show a DIFFERENT product
+  ("Add the first cake and also find roses") → emit ["CART_ACTION", "SEARCH"] and
+  populate BOTH cart_items (for the add) AND search_query (for the find).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 STEP 3 — STRICT FIELD EXTRACTION RULES
@@ -83,6 +87,12 @@ STEP 3 — STRICT FIELD EXTRACTION RULES
 "cart_items": list of {"query": string, "quantity": int} or null.
 "trigger_checkout": true only if user explicitly wants to buy/checkout/pay now.
 "recipient_name", "delivery_address", "contact_number": extract verbatim if stated, else null.
+"gift_message": verbatim greeting card / gift note text the user wants to include (e.g., from
+  "Write 'Happy Birthday Amma!' on the card" → "Happy Birthday Amma!"), or null if none stated.
+
+"location" — special Sinhala patterns:
+  • "inne X" / "innawa X" means "is in X" → location is X (e.g. "mama inne negombo" → "Negombo")
+  • "X weli" / "X walata" → location is X (e.g. "colombo weli" → "Colombo")
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OUTPUT SCHEMA (emit every key, no extras)
@@ -101,7 +111,8 @@ OUTPUT SCHEMA (emit every key, no extras)
   "trigger_checkout": false,
   "recipient_name": null,
   "delivery_address": null,
-  "contact_number": null
+  "contact_number": null,
+  "gift_message": null
 }
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -144,7 +155,20 @@ User: "Add the first Glitter Hearts Chocolate Box you showed me to the cart"
 // "buy this", "put it in cart", "place order", "checkout", or "order now" MUST be
 // classified EXCLUSIVELY as CART_ACTION. NEVER reclassify these as SEARCH.
 User: "add it to my cart"
-{"intents":["CART_ACTION"],"allergies":{},"preferences":{},"search_recipient":null,"location":null,"deadline":null,"search_query":null,"budget_limit":null,"tracking_code":null,"cart_items":[{"query":"","quantity":1}],"trigger_checkout":false,"recipient_name":null,"delivery_address":null,"contact_number":null}
+{"intents":["CART_ACTION"],"allergies":{},"preferences":{},"search_recipient":null,"location":null,"deadline":null,"search_query":null,"budget_limit":null,"tracking_code":null,"cart_items":[{"query":"","quantity":1}],"trigger_checkout":false,"recipient_name":null,"delivery_address":null,"contact_number":null,"gift_message":null}
+
+// MULTI-INTENT: add item AND search for something different
+User: "Add the first cake you showed me to the cart, and then find some red roses under 3000"
+{"intents":["CART_ACTION","SEARCH"],"allergies":{},"preferences":{},"search_recipient":null,"location":null,"deadline":null,"search_query":"red roses","budget_limit":3000,"tracking_code":null,"cart_items":[{"query":"cake","quantity":1}],"trigger_checkout":false,"recipient_name":null,"delivery_address":null,"contact_number":null,"gift_message":null}
+
+// GIFT MESSAGE + CHECKOUT ("inne" Sinhala location)
+// [history] user asked about flowers for delivery, prior location was established
+User: "Looks perfect, let's proceed to buy. Write 'To the best Appachchi in the world, from your son' on the greeting card message."
+{"intents":["CART_ACTION"],"allergies":{},"preferences":{},"search_recipient":null,"location":null,"deadline":null,"search_query":null,"budget_limit":null,"tracking_code":null,"cart_items":[],"trigger_checkout":true,"recipient_name":null,"delivery_address":null,"contact_number":null,"gift_message":"To the best Appachchi in the world, from your son"}
+
+// LOCATION: "inne X" Sinhala pattern = "is in X"
+User: "Mama inne negombo thilakma venue eka gawa. can you deliver flowers here on 28th June?"
+{"intents":["SEARCH","LOGISTICS"],"allergies":{},"preferences":{},"search_recipient":null,"location":"Negombo","deadline":"28th June","search_query":"flowers","budget_limit":null,"tracking_code":null,"cart_items":null,"trigger_checkout":false,"recipient_name":null,"delivery_address":null,"contact_number":null,"gift_message":null}
 
 Respond ONLY with the JSON object. No explanation, no markdown.
 """

@@ -13,6 +13,7 @@ import { ShoppingContextCard } from "@/components/ShoppingContextCard";
 import { ProductCard, Product } from "@/components/ProductCard";
 import { ChatInputCapsule } from "@/components/ChatInputCapsule";
 import { OrderModal, CheckoutSuccessModal } from "@/components/OrderModals";
+import { RukiMascot, MascotState } from "@/components/RukiMascot";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 const generateUserId = () => `ruki_${Math.random().toString(36).substring(2, 10)}`;
@@ -157,6 +158,28 @@ export default function RukiPage() {
   const [orderError, setOrderError] = useState<string | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
+
+  // ── Mascot state
+  const [mascotHappy, setMascotHappy] = useState(false);
+  const prevIsTypingRef = useRef(false);
+  useEffect(() => {
+    if (prevIsTypingRef.current && !isTyping && messages.length > 1) {
+      setMascotHappy(true);
+      const t = setTimeout(() => setMascotHappy(false), 2200);
+      return () => clearTimeout(t);
+    }
+    prevIsTypingRef.current = isTyping;
+  }, [isTyping, messages.length]);
+
+  const mascotState: MascotState = mascotHappy
+    ? "happy"
+    : isTyping
+    ? "thinking"
+    : streamedText.length > 0
+    ? "speaking"
+    : messageInput.length > 0
+    ? "typing"
+    : "idle";
 
   // ── Memory recall toast
   const [memoryToast, setMemoryToast] = useState<string | null>(null);
@@ -384,6 +407,7 @@ export default function RukiPage() {
               if (p.recipient_name) setOrderRecipientName(p.recipient_name);
               if (p.delivery_address) setOrderAddress(p.delivery_address);
               if (p.contact_number) setOrderPhone(p.contact_number);
+              if (p.gift_message) setOrderGiftMessage(p.gift_message);
               if (p.trigger_checkout) {
                 setTimeout(() => { handleCreateOrderLink(); }, 300);
               }
@@ -623,6 +647,11 @@ export default function RukiPage() {
                 </AnimatePresence>
 
                 <div ref={chatEndRef} />
+              </div>
+
+              {/* Ruki Mascot — floats above the input capsule */}
+              <div className="absolute bottom-18 right-4 z-10 pointer-events-auto">
+                <RukiMascot state={mascotState} />
               </div>
 
               <ChatInputCapsule messageInput={messageInput} setMessageInput={setMessageInput} isMicActive={isMicActive} setIsMicActive={setIsMicActive} isCameraActive={isCameraActive} setIsCameraActive={setIsCameraActive} isAudioActive={isAudioActive} setIsAudioActive={setIsAudioActive} onSend={handleSendMessage} />

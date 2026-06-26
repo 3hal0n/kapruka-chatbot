@@ -29,15 +29,25 @@ router_sessions: Dict[str, Router] = {}
 import re
 
 def parse_budget_limit(msg: str) -> Optional[float]:
-    """Parse numeric budget limit from user message (e.g. under 5000, less than 5,000)."""
-    pattern = r'(?:under|below|less\s+than|budget\s+of|budget|max|maximum|up\s+to)\s*(?:rs\.?|lkr)?\s*([\d,]+)'
-    match = re.search(pattern, msg, re.IGNORECASE)
-    if match:
-        num_str = match.group(1).replace(",", "")
-        try:
-            return float(num_str)
-        except ValueError:
-            pass
+    """Parse numeric budget limit from user message (English + Sinhala patterns)."""
+    patterns = [
+        # English: keyword immediately before number — "under 5000", "max 3,000", "up to 4500"
+        r'(?:under|below|less\s+than|budget\s+of|max(?:imum)?|up\s+to)\s*(?:rs\.?|lkr)?\s*([\d,]+)',
+        # Sinhala particle: "4500 aduwen / aduwata / yathe / widin" (number precedes keyword)
+        r'([\d,]+)\s*(?:rs\.?)?\s*(?:aduwen|aduwata|yathe|athare|widin|wenna\s+ona)',
+        # Budget word with Sinhala particles between it and the number: "budget eka 4500"
+        r'budget\s+(?:\w+\s+)?([\d,]+)',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, msg, re.IGNORECASE)
+        if match:
+            num_str = match.group(1).replace(",", "")
+            try:
+                val = float(num_str)
+                if val > 0:
+                    return val
+            except ValueError:
+                pass
     return None
 
 

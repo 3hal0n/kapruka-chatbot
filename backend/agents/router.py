@@ -32,6 +32,7 @@ class RouterOutput(BaseModel):
     recipient_name: str | None = None
     delivery_address: str | None = None
     contact_number: str | None = None
+    gift_message: str | None = None     # verbatim greeting card / gift note text
 
 
 
@@ -52,6 +53,17 @@ class Router:
         to the LLM classifier.
         """
         msg = user_message.strip().lower()
+
+        import re as _re
+
+        # If the message ALSO contains an explicit search request for a different
+        # product ("and then find roses", "also show me X"), fall through to the LLM
+        # so it can return a combined CART_ACTION + SEARCH classification.
+        if _re.search(
+            r'\b(?:and\s+(?:then\s+)?(?:find|show|search|look\s+for)|also\s+(?:find|show|search)|plus\s+(?:find|show))\b',
+            msg
+        ):
+            return None
 
         # Canonical cart-action trigger phrases — order matters (most specific first)
         CART_PATTERNS = [
@@ -77,9 +89,12 @@ class Router:
             r"\bplace\s+(the\s+)?order\b",
             r"\border\s+now\b",
             r"\bbuy\s+now\b",
+            # "proceed to buy / proceed to checkout / let's checkout"
+            r"\bproceed\s+to\s+(?:buy|order|checkout|pay)\b",
+            r"\b(?:let'?s?|lets?)\s+(?:proceed|go\s+ahead|checkout)\b",
+            r"\bgo\s+ahead\s+(?:and\s+)?(?:order|buy|checkout)\b",
         ]
 
-        import re as _re
         for pattern in CART_PATTERNS:
             if _re.search(pattern, msg):
                 print(f"[CartInterceptor] Forced CART_ACTION — matched pattern: '{pattern}'")
@@ -349,14 +364,20 @@ class Router:
 
         intents = classification.get("intents", ["SEARCH"])
 
-        # ── CART_ACTION exclusivity enforcement ───────────────────────────────
-        # If the LLM (not the interceptor) returned both CART_ACTION and SEARCH,
-        # drop SEARCH. An action turn must never also spawn a product discovery
-        # loop — that causes duplicate carousels and breaks cart UX.
-        if "CART_ACTION" in intents and "SEARCH" in intents:
+        # ── CART_ACTION + SEARCH handling ────────────────────────────────────
+        # When the LLM intentionally returns both (multi-intent: "add X and find Y"),
+        # we allow them to coexist so both the cart-add and the product search run.
+        # We only strip SEARCH when it looks like an LLM mis-classification (no
+        # explicit search request phrasing alongside the cart action).
+        import re as _re
+        _has_explicit_search = bool(_re.search(
+            r'\b(?:and\s+(?:then\s+)?(?:find|show|search|look\s+for)|also\s+(?:find|show|search)|plus\s+(?:find|show))\b',
+            user_message, _re.IGNORECASE
+        ))
+        if "CART_ACTION" in intents and "SEARCH" in intents and not _has_explicit_search:
             intents = [i for i in intents if i != "SEARCH"]
             classification["intents"] = intents
-            print("[Router] Stripped SEARCH from CART_ACTION turn.")
+            print("[Router] Stripped SEARCH from CART_ACTION turn (no explicit search request).")
 
         print(f"Customer        : {self.customer_id}")
         print(f"Router Decision : {intents}")
@@ -402,7 +423,8 @@ class Router:
                     "trigger_checkout": trigger_checkout,
                     "recipient_name": classification.get("recipient_name"),
                     "delivery_address": classification.get("delivery_address"),
-                    "contact_number": classification.get("contact_number")
+                    "contact_number": classification.get("contact_number"),
+                    "gift_message": classification.get("gift_message"),
                 }
                 yield f"<<CART_UPDATE>>:{json.dumps(cart_update_payload)}"
 
