@@ -57,10 +57,14 @@ class Router:
         CART_PATTERNS = [
             # Explicit "add X to [the/my] cart" — covers "to the cart", "to my cart", "to cart"
             r"\badd\b.*\bto\s+(the\s+|my\s+)?cart\b",
-            r"\bput\b.*\binto?\s+(the\s+|my\s+)?cart\b",
-            r"\bplace\b.*\bin\s+(the\s+|my\s+)?cart\b",
-            # "add the first / add that / add it / add [name]"
+            # "put X in/into [the/my] cart" — `in(?:to)?` matches "in" OR "into"
+            r"\bput\b.*\bin(?:to)?\s+(the\s+|my\s+)?cart\b",
+            r"\bplace\b.*\bin(?:to)?\s+(the\s+|my\s+)?cart\b",
+            # "add the first / add that / add it / add this / add [name]"
             r"\badd\s+(it|that|this|the\s+(first|second|third|top|last))\b",
+            # "add item / add an item / add this item" — standalone action without explicit cart reference
+            r"\badd\s+(?:an?\s+)?item\b",
+            r"\badd\s+this\s+item\b",
             # "buy this / buy it / buy that"
             r"\bbuy\s+(it|this|that|the\s+(first|second|third|top|last))\b",
             # "I'll take it / I want this one / get me that"
