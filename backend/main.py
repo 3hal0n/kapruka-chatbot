@@ -368,42 +368,46 @@ async def create_order_endpoint(request: OrderRequest):
         )
         logger.info(f"kapruka_create_order result: {result}")
 
-        # Parse checkout URL from MCP response — field names may vary
+        # Parse checkout URL from MCP response — field names may vary.
+        # IMPORTANT: only ever return a REAL link the MCP gave us. We never
+        # fabricate a kapruka.com/checkout/... URL — those 404. When MCP returns
+        # no link, checkout_url stays null and the frontend falls back to the
+        # individual product-page links instead.
         checkout_url = (
             result.get("checkout_url")
             or result.get("payment_url")
             or result.get("url")
             or result.get("order_url")
+            or result.get("payment_link")
+            or result.get("cart_url")
         )
         order_id = (
             result.get("order_id")
             or result.get("order_number")
             or result.get("id")
-            or "RUKI-" + str(int(time.time()))
         )
 
-        # Fallback URL if MCP doesn't return a direct link
-        if not checkout_url:
-            checkout_url = f"https://www.kapruka.com/checkout/guest?order_ref={order_id}&items={len(request.cart)}"
-
         return {
-            "status": "success",
+            "status": "success" if checkout_url else "no_link",
             "order_id": order_id,
-            "checkout_url": checkout_url,
-            "message": f"Order {order_id} created successfully."
+            "checkout_url": checkout_url,  # may be null — frontend uses product links
+            "message": (
+                f"Order {order_id} created successfully."
+                if checkout_url else
+                "Order received — open any product's Kapruka page to complete payment."
+            ),
         }
 
     except Exception as e:
         logger.exception(f"kapruka_create_order failed: {e}")
-        # Graceful fallback — still provide a usable checkout link
-        import random, string
-        ref = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        fallback_url = f"https://www.kapruka.com/checkout/guest?order_ref=RUKI-{ref}&items={len(request.cart)}"
+        # No fabricated links. Signal failure honestly; the frontend will guide
+        # the user to the real product pages instead.
         return {
-            "status": "fallback",
-            "order_id": f"RUKI-{ref}",
-            "checkout_url": fallback_url,
-            "message": "Order submitted (offline fallback)."
+            "status": "error",
+            "order_id": None,
+            "checkout_url": None,
+            "message": "Couldn't reach Kapruka checkout right now — tap a product's "
+                       "“Buy on Kapruka” link to complete your purchase directly.",
         }
 
 

@@ -18,6 +18,7 @@ export interface CartItem {
   price: number;
   image_url: string;
   quantity: number;
+  url?: string; // real Kapruka product-page URL for direct checkout
 }
 
 interface RightCartProps {
@@ -69,7 +70,7 @@ export function RightCart({
             <div>
               <p className="text-sm font-black uppercase tracking-wider text-foreground">Your cart is empty</p>
               <p className="mt-1 text-xs font-medium leading-relaxed text-muted-foreground">
-                Ask Ruki for a gift or tap <span className="font-bold text-primary">Add to Cart</span> on any product to build an order link.
+                Ask Ruki for a gift or tap <span className="font-bold text-primary">Add to Cart</span> on any product, then buy it on Kapruka.
               </p>
             </div>
             <div className="w-full space-y-2">
@@ -156,9 +157,9 @@ export function RightCart({
           style={{ backgroundColor: "#FFD700", color: "#0B0410" }}
         >
           {isOrderLoading ? (
-            <><Loader2 className="h-4 w-4 animate-spin" /> Placing Order...</>
+            <><Loader2 className="h-4 w-4 animate-spin" /> Opening Kapruka...</>
           ) : (
-            "Create Order Link"
+            "Buy on Kapruka"
           )}
         </button>
 

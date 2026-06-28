@@ -6,7 +6,7 @@ from memory.semantic_memory import add_or_update_profile, get_profile
 from agents import catalog_agent, logistics_agent
 from utils.config import CLAUDE_MODEL_CLASSIFY, CLAUDE_MAX_TOKENS_CLASSIFY
 from utils.prompts import ROUTER_SYSTEM_PROMPT
-from infrastructure.llm.client import chat
+from infrastructure.llm.client import chat, LLMUnavailableError
 import time
 from pydantic import BaseModel
 from typing import Literal
@@ -192,14 +192,35 @@ class Router:
         history = self.st_memory.get_history()
         messages = history + [{"role": "user", "content": user_message}]
 
-        raw = chat(
-            system=ROUTER_SYSTEM_PROMPT,
-            messages=messages,
-            max_tokens=CLAUDE_MAX_TOKENS_CLASSIFY,
-            model=CLAUDE_MODEL_CLASSIFY,
-            json_mode=True,
-            temperature=0.1,  # deterministic JSON classification
-        )
+        try:
+            raw = chat(
+                system=ROUTER_SYSTEM_PROMPT,
+                messages=messages,
+                max_tokens=CLAUDE_MAX_TOKENS_CLASSIFY,
+                model=CLAUDE_MODEL_CLASSIFY,
+                json_mode=True,
+                temperature=0.1,  # deterministic JSON classification
+            )
+        except LLMUnavailableError as e:
+            # Real Gemini call failed (not offline mock mode). Fall back to a safe
+            # SEARCH default using the raw message — never invent a category.
+            print(f"[Router] LLM classify unavailable, using safe default: {e}")
+            return self._guard_search_query({
+                "intents": ["SEARCH"],
+                "allergies": {},
+                "preferences": {},
+                "search_recipient": None,
+                "location": None,
+                "deadline": None,
+                "search_query": "gift",
+                "budget_limit": None,
+                "tracking_code": None,
+                "cart_items": None,
+                "trigger_checkout": False,
+                "recipient_name": None,
+                "delivery_address": None,
+                "contact_number": None,
+            }, user_message)
 
         #structured output extraction - json format
         clean = raw.strip()
@@ -210,7 +231,7 @@ class Router:
 
         try:
             result = json.loads(clean)
-            validated = RouterOutput(**result) #pydantic validation 
+            validated = RouterOutput(**result) #pydantic validation
             result = validated.model_dump()
             if isinstance(result.get("intents"), str):
                 result["intents"] = [result["intents"]]
@@ -218,17 +239,17 @@ class Router:
                 result["allergies"] = {}
             if not isinstance(result.get("preferences"), dict):
                 result["preferences"] = {}
-            return result
+            return self._guard_search_query(result, user_message)
 
         except (json.JSONDecodeError, ValueError): #value errors for pydantic errors
-            return {
+            return self._guard_search_query({
                 "intents": ["SEARCH"],
                 "allergies": {},
                 "preferences": {},
                 "search_recipient": None,
                 "location": None,
                 "deadline": None,
-                "search_query": user_message,
+                "search_query": "gift",
                 "budget_limit": None,
                 "tracking_code": None,
                 "cart_items": None,
@@ -236,7 +257,47 @@ class Router:
                 "recipient_name": None,
                 "delivery_address": None,
                 "contact_number": None
-            }
+            }, user_message)
+
+    # ── Deterministic search_query guard ──────────────────────────────────────
+    # Generic gift words that mean "a gift" — NOT a concrete product category.
+    _GENERIC_GIFT_WORDS = {
+        "gift", "gifts", "hadiyak", "hadiya", "thohfa", "thohfe", "present",
+        "presents", "surprise", "ekak", "something", "thelak",
+    }
+
+    def _guard_search_query(self, classification: dict, user_message: str) -> dict:
+        """Stop the LLM from hallucinating a concrete category the user never said.
+
+        If the raw user message used a generic gift word (e.g. "gift ekak oni",
+        "hadiyak") but did NOT literally name the category the LLM returned
+        (e.g. message has no "chocolate" yet search_query == "chocolate"), force
+        search_query back to "gift". Deterministic — does not rely on the LLM
+        obeying the prompt. Directly kills the Father's-Day → "chocolate" bug.
+        """
+        import re as _re
+
+        sq = (classification.get("search_query") or "").strip().lower()
+        if not sq or sq == "gift":
+            return classification
+
+        msg = (user_message or "").lower()
+        msg_tokens = set(_re.findall(r"[a-z']+", msg))
+
+        # Did the user use a generic gift word?
+        used_generic = bool(msg_tokens & self._GENERIC_GIFT_WORDS)
+        # Did the user literally mention the category the LLM returned?
+        # Compare on the first significant word of the query (e.g. "chocolate box" -> "chocolate").
+        sq_head = sq.split()[0] if sq.split() else sq
+        category_in_message = sq_head in msg or sq in msg
+
+        if used_generic and not category_in_message:
+            print(
+                f"[Guard] LLM invented search_query='{classification.get('search_query')}' "
+                f"from a generic gift request — overriding to 'gift'."
+            )
+            classification["search_query"] = "gift"
+        return classification
 
     # ── Context continuity helper ─────────────────────────────────────────────
 
@@ -361,6 +422,11 @@ class Router:
             budget_limit = llm_budget
 
         print(f"Effective budget_limit : {budget_limit}")
+
+        # Write the effective budget back into the classification so the intent
+        # badge the user sees matches the constraint actually used for search.
+        if budget_limit is not None:
+            classification["budget_limit"] = budget_limit
 
         intents = classification.get("intents", ["SEARCH"])
 

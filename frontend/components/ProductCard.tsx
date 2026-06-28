@@ -21,6 +21,8 @@ export interface Product {
   summary?: string;
   match_percentage?: number;
   match?: number; // lovable compatibility
+  url?: string; // real Kapruka product-page URL (from MCP search)
+  product_url?: string;
 }
 
 interface ProductCardProps {
@@ -54,6 +56,22 @@ const getProductImage = (prod: Product): string => {
   return "https://images.unsplash.com/photo-1549465220-1a8b9238cd48?w=400&auto=format&fit=crop&q=80";
 };
 
+/**
+ * Resolve a product's real Kapruka buy URL. Prefers the live `url`/`product_url`
+ * from the MCP search; only constructs a fallback slug URL when neither exists.
+ * Single source of truth shared by the product card and the cart checkout.
+ */
+export function kaprukaBuyUrl(product: Product): string {
+  const code = product.id || product.code || "";
+  return (
+    product.url ||
+    product.product_url ||
+    `https://www.kapruka.com/buyonline/${product.name
+      .toLowerCase()
+      .replace(/ /g, "-")}/kid/${code.toLowerCase()}`
+  );
+}
+
 export const itemVariants = {
   hidden: { opacity: 0, y: 16 },
   show: {
@@ -83,6 +101,9 @@ export function ProductCard({ product, onAdd, mode, onAddToBox }: ProductCardPro
 
   const cartBtnId = `add-to-cart-btn-${code.toLowerCase().replace(/_/g, "-")}`;
   const viewBtnId = `view-btn-${code.toLowerCase().replace(/_/g, "-")}`;
+
+  // Prefer a real Kapruka product URL from MCP; only construct a fallback when absent.
+  const buyUrl = kaprukaBuyUrl(product);
 
   const isBoxMode = mode === "Gift Box Builder";
 
@@ -162,12 +183,12 @@ export function ProductCard({ product, onAdd, mode, onAddToBox }: ProductCardPro
           )}
           <a
             id={viewBtnId}
-            href={`https://www.kapruka.com/buyonline/${product.name.toLowerCase().replace(/ /g, "-")}/kid/${code.toLowerCase()}`}
+            href={buyUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="rounded-xl border border-border bg-surface px-3 py-2 text-sm font-bold transition-all duration-300 ease-in-out hover:bg-muted flex items-center justify-center gap-1 text-foreground/80 hover:text-foreground"
           >
-            View
+            Buy on Kapruka
             <ExternalLink className="h-3 w-3" />
           </a>
         </div>

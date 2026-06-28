@@ -201,7 +201,7 @@ OCCASION_FALLBACKS = {
     "graduation": ["pen set", "book", "gift hamper", "watch"],
     "christmas": ["hamper", "chocolate", "gift box", "cake"],
     "mother": ["flowers", "chocolate", "spa", "gift hamper"],
-    "father": ["watch", "book", "gift hamper", "cake"],
+    "father": ["wallet", "watch", "gift hamper", "perfume"],
     "default": ["gift hamper", "chocolate", "flowers", "cake"]
 }
 
@@ -444,9 +444,10 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
             fallback_queries: list[str] = [search_query]
         else:
             # Vague query — use occasion-aware fallback list
+            # occ_lower may contain full strings like "father's day"; match on stem word
             fallback_queries = []
             for key, queries in OCCASION_FALLBACKS.items():
-                if key in sq_lower or key in occ_lower:
+                if key in sq_lower or key in occ_lower or key.rstrip("s") in occ_lower:
                     fallback_queries = queries
                     break
             if not fallback_queries:
