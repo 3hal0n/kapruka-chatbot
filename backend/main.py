@@ -33,8 +33,8 @@ def parse_budget_limit(msg: str) -> Optional[float]:
     patterns = [
         # English: keyword immediately before number — "under 5000", "max 3,000", "up to 4500"
         r'(?:under|below|less\s+than|budget\s+of|max(?:imum)?|up\s+to)\s*(?:rs\.?|lkr)?\s*([\d,]+)',
-        # Sinhala particle: "4500 aduwen / aduwata / yathe / widin" (number precedes keyword)
-        r'([\d,]+)\s*(?:rs\.?)?\s*(?:aduwen|aduwata|yathe|athare|widin|wenna\s+ona)',
+        # Sinhala particle: "4500 aduwen / aadu / adu / aduwata / yathe / widin" (number precedes keyword)
+        r'([\d,]+)\s*(?:rs\.?)?\s*(?:aduwen|aduwata|yathe|athare|widin|wenna\s+ona|aadu|adu(?:wen)?)',
         # Budget word with Sinhala particles between it and the number: "budget eka 4500"
         r'budget\s+(?:\w+\s+)?([\d,]+)',
     ]

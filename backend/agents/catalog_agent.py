@@ -280,6 +280,14 @@ def _sanitise_search_query(query: str) -> str:
         "gift ekak":    "gift",
         "hadanna":      "gift",   # "make/find" — treat as generic gift search
         "thohfe":       "gift",
+        # Occasion-qualified gift phrases → strip occasion, keep "gift"
+        "fathers day gift": "gift",
+        "father's day gift": "gift",
+        "mothers day gift": "gift",
+        "mother's day gift": "gift",
+        "birthday gift":    "gift",
+        "birthday cake":    "birthday cake",  # keep specific cake intent
+        "christmas gift":   "gift",
         # Food / fruits
         "pala thiththa": "fruit basket",
         "amba":         "mango",
@@ -288,12 +296,15 @@ def _sanitise_search_query(query: str) -> str:
         "bag ekak":     "bag",
     }
 
-    # Location noise words to strip (these are NOT product keywords)
+    # Location / occasion noise words to strip (these are NOT product keywords)
     LOCATION_NOISE = {
         "walata", "welin", "kiyana", "side", "area", "district",
         "deliver", "delivery", "karanna", "puluwanda", "thiyenawa",
         "ekak", "hadanna", "enna", "oni", "wenne", "nehe",
         "for", "to", "from", "the", "a", "an",
+        # Occasion words that sometimes leak from the router into the search query
+        "fathers", "father's", "mothers", "mother's",
+        "birthday", "anniversary", "christmas", "valentine",
     }
 
     q = query.strip()
@@ -417,8 +428,15 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
         # fallback queries must also be flower-adjacent — never substitute cakes
         # or chocolates.  A fallback is ONLY applied when the original query is
         # genuinely vague (e.g. "birthday gift", "something nice").
-        GENERIC_TERMS = {"gift", "present", "surprise", "item", "something", "nice"}
-        query_is_specific = sq_lower not in GENERIC_TERMS and len(sq_lower.split()) <= 3
+        GENERIC_TERMS = {
+            "gift", "present", "surprise", "item", "something", "nice",
+            # Occasion-qualified "gift" queries are also vague (no product category named)
+            "fathers day gift", "father's day gift", "mothers day gift", "mother's day gift",
+            "birthday gift", "anniversary gift", "christmas gift", "valentine gift",
+        }
+        # A query is specific only when it names a real product category (≤2 words) AND
+        # is not a generic gift/occasion phrase.
+        query_is_specific = sq_lower not in GENERIC_TERMS and len(sq_lower.split()) <= 2
 
         if query_is_specific:
             # The user named a concrete product — retry the SAME query with
@@ -579,6 +597,11 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
     context_block = "\n".join(context_notes) if context_notes else ""
 
     user_content = (
+        # Include the raw message FIRST so the LLM can detect the user's language
+        # and mirror it exactly — this is the most critical input for language matching.
+        f"User's original message (mirror this language exactly in your reply): {user_raw_message}\n\n"
+        if user_raw_message else ""
+    ) + (
         f"{context_block}\n" if context_block else ""
     ) + (
         f"Recipients: {', '.join(str(r) for r in recipients) if recipients else 'someone special'}\n"

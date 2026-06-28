@@ -544,6 +544,13 @@ class Router:
                 
         # 6. Stream search — logistics already running in background
         if "SEARCH" in intents:
+            # Resolve occasion: prefer router-extracted deadline (e.g. "Father's Day"),
+            # fall back to sidebar dropdown value nested under any recipient key.
+            _occasion = classification.get("deadline") or next(
+                (v.get("occasion") for v in (recipient_context or {}).values()
+                 if isinstance(v, dict) and v.get("occasion")),
+                None
+            )
             async for chunk in catalog_agent.run_stream(
                 recipients=all_recipients,
                 search_query=classification.get("search_query") or user_message,
@@ -551,7 +558,7 @@ class Router:
                 new_profile=new_profile,
                 query_vector=query_vector,
                 budget_limit=budget_limit,
-                occasion=classification.get("occasion") or (recipient_context or {}).get("occasion"),
+                occasion=_occasion,
                 user_raw_message=user_message,
                 vibe_check=vibe_check,
             ):
