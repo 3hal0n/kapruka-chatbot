@@ -2,16 +2,17 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, ShoppingCart, Sun, Moon, AlertCircle, Trash2 } from "lucide-react";
+import { Menu, ShoppingCart, Sun, Moon, AlertCircle, Trash2, Gift } from "lucide-react";
 
 import { LeftSidebar, Mode } from "@/components/LeftSidebar";
 import { RightCart, CartItem } from "@/components/RightCart";
+import { GroupGiftModal } from "@/components/GroupGiftModal";
 import { AssistantBubble } from "@/components/AssistantBubble";
 import { UserBubble } from "@/components/UserBubble";
 import { ShoppingContextCard } from "@/components/ShoppingContextCard";
-import { ProductCard, Product } from "@/components/ProductCard";
+import { ProductCard, Product, kaprukaBuyUrl } from "@/components/ProductCard";
 import { ChatInputCapsule } from "@/components/ChatInputCapsule";
-import { OrderModal, CheckoutSuccessModal } from "@/components/OrderModals";
+import { RukiMascot, MascotState } from "@/components/RukiMascot";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 const generateUserId = () => `ruki_${Math.random().toString(36).substring(2, 10)}`;
@@ -83,6 +84,15 @@ const isNoMatchesOrError = (msg: Message): boolean => {
   return false;
 };
 
+interface FlyingItem {
+  id: string;
+  image: string;
+  sx: number;
+  sy: number;
+  tx: number;
+  ty: number;
+}
+
 export default function RukiPage() {
   // ── Navigation
   const [mode, setMode] = useState<Mode>("Smart Shopping");
@@ -93,6 +103,18 @@ export default function RukiPage() {
   const [budget, setBudget] = useState("");
   const [recipient, setRecipient] = useState("");
   const [occasion, setOccasion] = useState("");
+
+  // ── Vibe Check (AI personality analyzer)
+  const [vibeCheck, setVibeCheck] = useState("");
+
+  // ── Group Gift
+  const [isGroupGiftModalOpen, setIsGroupGiftModalOpen] = useState(false);
+  const [groupGiftLink, setGroupGiftLink] = useState("");
+
+  // ── Gift Box Builder
+  const [giftBoxItems, setGiftBoxItems] = useState<CartItem[]>([]);
+  const [flyingItems, setFlyingItems] = useState<FlyingItem[]>([]);
+  const giftBoxCanvasRef = useRef<HTMLDivElement>(null);
 
   // ── Input toggles
   const [language, setLanguage] = useState("English");
@@ -125,16 +147,30 @@ export default function RukiPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [deliveryFee, setDeliveryFee] = useState(350);
 
-  // ── Order / checkout state
-  const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
-  const [orderRecipientName, setOrderRecipientName] = useState("");
-  const [orderAddress, setOrderAddress] = useState("");
-  const [orderPhone, setOrderPhone] = useState("");
-  const [orderGiftMessage, setOrderGiftMessage] = useState("");
-  const [isOrderLoading, setIsOrderLoading] = useState(false);
-  const [orderError, setOrderError] = useState<string | null>(null);
-  const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
-  const [isCheckoutModalOpen, setIsCheckoutModalOpen] = useState(false);
+  // ── Checkout state — no detail collection. Checkout opens the real Kapruka
+  // product pages directly; we never collect address/phone or fabricate links.
+
+  // ── Mascot state
+  const [mascotHappy, setMascotHappy] = useState(false);
+  const prevIsTypingRef = useRef(false);
+  useEffect(() => {
+    if (prevIsTypingRef.current && !isTyping && messages.length > 1) {
+      setMascotHappy(true);
+      const t = setTimeout(() => setMascotHappy(false), 2200);
+      return () => clearTimeout(t);
+    }
+    prevIsTypingRef.current = isTyping;
+  }, [isTyping, messages.length]);
+
+  const mascotState: MascotState = mascotHappy
+    ? "happy"
+    : isTyping
+    ? "thinking"
+    : streamedText.length > 0
+    ? "speaking"
+    : messageInput.length > 0
+    ? "typing"
+    : "idle";
 
   // ── Memory recall toast
   const [memoryToast, setMemoryToast] = useState<string | null>(null);
@@ -198,7 +234,7 @@ export default function RukiPage() {
         fetch(`${BACKEND_URL}/api/delivery?city=Colombo`)
           .then(r => r.json()).then(d => { if (d.fee) setDeliveryFee(d.fee); }).catch(() => {});
       }
-      return [...prev, { id, name: product.name, price, image_url: product.image_url || product.image || "", quantity: qtyToAdd }];
+      return [...prev, { id, name: product.name, price, image_url: product.image_url || product.image || "", quantity: qtyToAdd, url: kaprukaBuyUrl(product) }];
     });
     if (window.innerWidth < 768) setRightOpen(true);
   };
@@ -210,25 +246,16 @@ export default function RukiPage() {
   const delivery = cart.length > 0 ? deliveryFee : 0;
   const total = subtotal + delivery;
 
-  // ── Checkout
-  const handleCreateOrderLink = () => { if (cart.length === 0) return; setOrderError(null); setIsOrderModalOpen(true); };
-
-  const handleSubmitOrder = async () => {
-    if (!orderRecipientName.trim() || !orderAddress.trim() || !orderPhone.trim()) {
-      setOrderError("Please fill in all fields before placing the order."); return;
-    }
-    setIsOrderLoading(true); setOrderError(null);
-    try {
-      const res = await fetch(`${BACKEND_URL}/api/order`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userIdRef.current, cart: cart.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity, image_url: i.image_url })), recipient_name: orderRecipientName, delivery_address: orderAddress, contact_number: orderPhone, gift_message: orderGiftMessage || undefined }),
-      });
-      const data = await res.json();
-      const url = data.checkout_url || `https://www.kapruka.com/checkout/guest?order_ref=${data.order_id}`;
-      setCheckoutUrl(url); setIsOrderModalOpen(false); setIsCheckoutModalOpen(true);
-      window.open(url, "_blank", "noopener,noreferrer");
-    } catch { setOrderError("Could not connect to the server. Please try again."); }
-    finally { setIsOrderLoading(false); }
+  // ── Checkout — open each cart item's real Kapruka product page in a new tab.
+  // No detail collection, no fabricated links: the user completes the purchase
+  // on Kapruka's live site. Triggered by the cart button and by the agent.
+  const handleCreateOrderLink = () => {
+    if (cart.length === 0) return;
+    cart.forEach((item, idx) => {
+      const url = item.url || `https://www.kapruka.com/buyonline/${item.name.toLowerCase().replace(/ /g, "-")}/kid/${item.id.toLowerCase()}`;
+      // Stagger slightly so browsers don't block the rapid window.open burst.
+      setTimeout(() => window.open(url, "_blank", "noopener,noreferrer"), idx * 120);
+    });
   };
 
   // ── Clear history
@@ -236,6 +263,62 @@ export default function RukiPage() {
     try { await fetch(`${BACKEND_URL}/api/reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userIdRef.current }) }); } catch { /* offline */ }
     setMessages([{ id: `clear-${Date.now()}`, sender: "ai", text: "History cleared. How can I help you find gifts today?" }]);
     setBudget(""); setRecipient(""); setOccasion(""); setCurrentIntents([]); setCurrentStatus(null);
+  };
+
+  // ── Gift Box Builder: fly thumbnail → box canvas, then commit item
+  const handleAddToBox = (product: Product, sourceRect: DOMRect) => {
+    const totalInBox = giftBoxItems.reduce((s, i) => s + i.quantity, 0);
+    if (totalInBox >= 5) return;
+
+    const boxRect = giftBoxCanvasRef.current?.getBoundingClientRect();
+    const tx = boxRect ? boxRect.left + boxRect.width / 2 : window.innerWidth / 2;
+    const ty = boxRect ? boxRect.top + boxRect.height / 2 : 80;
+
+    const flyId = `fly-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const image = product.image_url || product.image || "";
+
+    setFlyingItems(prev => [...prev, {
+      id: flyId,
+      image,
+      sx: sourceRect.left + sourceRect.width / 2,
+      sy: sourceRect.top + sourceRect.height / 2,
+      tx,
+      ty,
+    }]);
+
+    setTimeout(() => {
+      setFlyingItems(prev => prev.filter(f => f.id !== flyId));
+      setGiftBoxItems(prev => {
+        if (prev.reduce((s, i) => s + i.quantity, 0) >= 5) return prev;
+        const price = typeof product.price === "object" ? (product.price as any).amount : Number(product.price);
+        const hit = prev.find(i => i.id === product.id);
+        if (hit) return prev.map(i => i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i);
+        return [...prev, { id: product.id, name: product.name, price, image_url: product.image_url || product.image || "", quantity: 1 }];
+      });
+    }, 580);
+  };
+
+  // ── Co-Gift: serialize cart to shareable token via backend
+  const handleGroupGift = async () => {
+    if (cart.length === 0) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/group-gift/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cart: cart.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity, image_url: i.image_url })),
+          subtotal,
+          total,
+          currency: "LKR",
+        }),
+      });
+      const data = await res.json();
+      const token = data.token || "preview";
+      setGroupGiftLink(`${window.location.origin}/?group_gift=${token}`);
+    } catch {
+      setGroupGiftLink(`${window.location.origin}/?group_gift=preview`);
+    }
+    setIsGroupGiftModalOpen(true);
   };
 
   // ── Send message via SSE
@@ -253,7 +336,7 @@ export default function RukiPage() {
     ctx[recipient.toLowerCase() || "default"] = { budget: budget || undefined, occasion: occasion || undefined, location: "Colombo" };
 
     try {
-      const resp = await fetch(`${BACKEND_URL}/api/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userIdRef.current, message: userText, recipient_context: ctx, budget: budget || undefined, recipient: recipient || undefined, occasion: occasion || undefined }) });
+      const resp = await fetch(`${BACKEND_URL}/api/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userIdRef.current, message: userText, recipient_context: ctx, budget: budget || undefined, recipient: recipient || undefined, occasion: occasion || undefined, vibe_check: vibeCheck.trim() || undefined }) });
       if (!resp.ok || !resp.body) throw new Error("SSE error");
 
       const reader = resp.body.getReader(); const dec = new TextDecoder("utf-8");
@@ -303,11 +386,9 @@ export default function RukiPage() {
               products.forEach((prod: Product) => {
                 handleAddToCart(prod);
               });
-              if (p.recipient_name) setOrderRecipientName(p.recipient_name);
-              if (p.delivery_address) setOrderAddress(p.delivery_address);
-              if (p.contact_number) setOrderPhone(p.contact_number);
               if (p.trigger_checkout) {
-                setTimeout(() => { handleCreateOrderLink(); }, 300);
+                // Open the real Kapruka product pages after the cart settles.
+                setTimeout(() => { handleCreateOrderLink(); }, 400);
               }
               // A cart_update payload is an action frame — clear status spinner
               // immediately so the UI doesn't sit on "Analyzing context..."
@@ -367,12 +448,96 @@ export default function RukiPage() {
 
       {/* Main content layout below header */}
       <div className="flex flex-1 overflow-hidden">
-        <LeftSidebar mode={mode} setMode={setMode} budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} open={leftOpen} onClose={() => setLeftOpen(false)} theme={theme} toggleTheme={toggleTheme} />
+        <LeftSidebar mode={mode} setMode={setMode} budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} open={leftOpen} onClose={() => setLeftOpen(false)} theme={theme} toggleTheme={toggleTheme} vibeCheck={vibeCheck} setVibeCheck={setVibeCheck} />
 
         {/* Center workspace */}
         <main className="flex flex-1 flex-col overflow-hidden">
           <div className="flex flex-1 flex-col overflow-hidden p-3 md:p-6">
             <div className="relative flex flex-col h-full overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl shadow-purple-950/50">
+
+              {/* ── Gift Box Canvas (visible only in Gift Box Builder mode) ── */}
+              <AnimatePresence>
+                {mode === "Gift Box Builder" && (
+                  <motion.div
+                    ref={giftBoxCanvasRef}
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.25, ease: "easeInOut" }}
+                    className="shrink-0 overflow-hidden border-b border-border bg-linear-to-r from-primary/5 to-amber/5 px-4 py-3"
+                  >
+                    <div className="flex items-center justify-between mb-2.5">
+                      <div className="flex items-center gap-2">
+                        <Gift className="h-4 w-4 text-amber" />
+                        <span className="text-sm font-black tracking-tight text-foreground">Gift Box</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold select-none ${giftBoxItems.reduce((s, i) => s + i.quantity, 0) >= 5 ? "bg-amber text-amber-foreground" : "bg-primary/10 text-primary"}`}>
+                          {giftBoxItems.reduce((s, i) => s + i.quantity, 0)}/5 items
+                        </span>
+                      </div>
+                      {giftBoxItems.length > 0 && (
+                        <button
+                          onClick={() => setGiftBoxItems([])}
+                          className="text-[11px] font-bold text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 5-slot grid */}
+                    <div className="flex gap-2">
+                      {[0, 1, 2, 3, 4].map(slot => {
+                        const item = giftBoxItems[slot];
+                        return (
+                          <motion.div
+                            key={slot}
+                            animate={item ? { scale: [1.18, 1] } : { scale: 1 }}
+                            transition={{ type: "spring", stiffness: 380, damping: 22 }}
+                            className={`relative flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border-2 transition-all duration-300 ${
+                              item
+                                ? "border-primary/60 bg-surface shadow-sm"
+                                : "border-dashed border-border bg-muted/20"
+                            }`}
+                          >
+                            {item ? (
+                              <>
+                                <img
+                                  src={item.image_url}
+                                  alt={item.name}
+                                  className="h-full w-full rounded-[10px] object-cover"
+                                />
+                                {item.quantity > 1 && (
+                                  <span className="absolute -right-1.5 -top-1.5 grid h-4 w-4 place-items-center rounded-full bg-primary text-[9px] font-black text-primary-foreground shadow">
+                                    {item.quantity}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-lg select-none opacity-30">🎁</span>
+                            )}
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+
+                    {giftBoxItems.reduce((s, i) => s + i.quantity, 0) >= 5 && (
+                      <motion.p
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="mt-2 text-[11px] font-bold text-amber"
+                      >
+                        Box is full!{" "}
+                        <button
+                          onClick={handleCreateOrderLink}
+                          className="underline underline-offset-2 cursor-pointer hover:text-amber/80 transition-colors"
+                        >
+                          Checkout now →
+                        </button>
+                      </motion.p>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Chat thread */}
               <div ref={scrollViewportRef} className="scroll-slim flex-1 overflow-y-auto h-full space-y-5 px-4 pb-24 pt-6 md:px-6 md:pb-24 md:pt-6">
@@ -382,8 +547,15 @@ export default function RukiPage() {
                     
                     {msg.products && msg.products.length > 0 && (
                       <motion.div initial="hidden" animate="show" variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08 } } }} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                        {msg.products.map(p => <ProductCard key={p.id} product={p} onAdd={() => handleAddToCart(p)} />
-                      )}
+                        {msg.products.map(p => (
+                          <ProductCard
+                            key={p.id}
+                            product={p}
+                            onAdd={() => handleAddToCart(p)}
+                            mode={mode}
+                            onAddToBox={(prod, rect) => handleAddToBox(prod, rect)}
+                          />
+                        ))}
                       </motion.div>
                     )}
 
@@ -456,12 +628,17 @@ export default function RukiPage() {
                 <div ref={chatEndRef} />
               </div>
 
+              {/* Ruki Mascot — floats above the input capsule */}
+              <div className="absolute bottom-18 right-4 z-10 pointer-events-auto">
+                <RukiMascot state={mascotState} />
+              </div>
+
               <ChatInputCapsule messageInput={messageInput} setMessageInput={setMessageInput} isMicActive={isMicActive} setIsMicActive={setIsMicActive} isCameraActive={isCameraActive} setIsCameraActive={setIsCameraActive} isAudioActive={isAudioActive} setIsAudioActive={setIsAudioActive} onSend={handleSendMessage} />
             </div>
           </div>
         </main>
 
-        <RightCart cart={cart} subtotal={subtotal} delivery={delivery} total={total} updateQuantity={updateQuantity} handleCreateOrderLink={handleCreateOrderLink} open={rightOpen} onClose={() => setRightOpen(false)} isOrderLoading={isOrderLoading} />
+        <RightCart cart={cart} subtotal={subtotal} delivery={delivery} total={total} updateQuantity={updateQuantity} handleCreateOrderLink={handleCreateOrderLink} open={rightOpen} onClose={() => setRightOpen(false)} onGroupGift={handleGroupGift} />
       </div>
 
       {(leftOpen || rightOpen) && <div onClick={() => { setLeftOpen(false); setRightOpen(false); }} className="fixed inset-0 z-30 bg-black/40 backdrop-blur-xs md:hidden" />}
@@ -480,9 +657,22 @@ export default function RukiPage() {
         )}
       </AnimatePresence>
 
-      <OrderModal open={isOrderModalOpen} onClose={() => setIsOrderModalOpen(false)} cart={cart} total={total} recipientName={orderRecipientName} setRecipientName={setOrderRecipientName} address={orderAddress} setAddress={setOrderAddress} phone={orderPhone} setPhone={setOrderPhone} giftMessage={orderGiftMessage} setGiftMessage={setOrderGiftMessage} isLoading={isOrderLoading} error={orderError} onSubmit={handleSubmitOrder} />
+      <GroupGiftModal open={isGroupGiftModalOpen} onClose={() => setIsGroupGiftModalOpen(false)} shareUrl={groupGiftLink} cart={cart} total={total} />
 
-      <CheckoutSuccessModal open={isCheckoutModalOpen} onClose={() => setIsCheckoutModalOpen(false)} checkoutUrl={checkoutUrl} />
+      {/* Flying thumbnail animations for Gift Box Builder */}
+      {flyingItems.map(item => (
+        <motion.img
+          key={item.id}
+          src={item.image}
+          alt=""
+          aria-hidden="true"
+          className="pointer-events-none fixed z-80 h-10 w-10 rounded-xl object-cover shadow-xl border-2 border-amber"
+          style={{ left: 0, top: 0 }}
+          initial={{ x: item.sx - 20, y: item.sy - 20, scale: 1, opacity: 1 }}
+          animate={{ x: item.tx - 20, y: item.ty - 20, scale: 0.35, opacity: 0 }}
+          transition={{ duration: 0.55, ease: [0.25, 0.46, 0.45, 0.94] }}
+        />
+      ))}
 
     </div>
   );

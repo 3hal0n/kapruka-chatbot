@@ -6,7 +6,7 @@ from memory.semantic_memory import add_or_update_profile, get_profile
 from agents import catalog_agent, logistics_agent
 from utils.config import CLAUDE_MODEL_CLASSIFY, CLAUDE_MAX_TOKENS_CLASSIFY
 from utils.prompts import ROUTER_SYSTEM_PROMPT
-from infrastructure.llm.client import chat
+from infrastructure.llm.client import chat, LLMUnavailableError
 import time
 from pydantic import BaseModel
 from typing import Literal
@@ -32,6 +32,7 @@ class RouterOutput(BaseModel):
     recipient_name: str | None = None
     delivery_address: str | None = None
     contact_number: str | None = None
+    gift_message: str | None = None     # verbatim greeting card / gift note text
 
 
 
@@ -53,14 +54,29 @@ class Router:
         """
         msg = user_message.strip().lower()
 
+        import re as _re
+
+        # If the message ALSO contains an explicit search request for a different
+        # product ("and then find roses", "also show me X"), fall through to the LLM
+        # so it can return a combined CART_ACTION + SEARCH classification.
+        if _re.search(
+            r'\b(?:and\s+(?:then\s+)?(?:find|show|search|look\s+for)|also\s+(?:find|show|search)|plus\s+(?:find|show))\b',
+            msg
+        ):
+            return None
+
         # Canonical cart-action trigger phrases — order matters (most specific first)
         CART_PATTERNS = [
             # Explicit "add X to [the/my] cart" — covers "to the cart", "to my cart", "to cart"
             r"\badd\b.*\bto\s+(the\s+|my\s+)?cart\b",
-            r"\bput\b.*\binto?\s+(the\s+|my\s+)?cart\b",
-            r"\bplace\b.*\bin\s+(the\s+|my\s+)?cart\b",
-            # "add the first / add that / add it / add [name]"
+            # "put X in/into [the/my] cart" — `in(?:to)?` matches "in" OR "into"
+            r"\bput\b.*\bin(?:to)?\s+(the\s+|my\s+)?cart\b",
+            r"\bplace\b.*\bin(?:to)?\s+(the\s+|my\s+)?cart\b",
+            # "add the first / add that / add it / add this / add [name]"
             r"\badd\s+(it|that|this|the\s+(first|second|third|top|last))\b",
+            # "add item / add an item / add this item" — standalone action without explicit cart reference
+            r"\badd\s+(?:an?\s+)?item\b",
+            r"\badd\s+this\s+item\b",
             # "buy this / buy it / buy that"
             r"\bbuy\s+(it|this|that|the\s+(first|second|third|top|last))\b",
             # "I'll take it / I want this one / get me that"
@@ -73,9 +89,12 @@ class Router:
             r"\bplace\s+(the\s+)?order\b",
             r"\border\s+now\b",
             r"\bbuy\s+now\b",
+            # "proceed to buy / proceed to checkout / let's checkout"
+            r"\bproceed\s+to\s+(?:buy|order|checkout|pay)\b",
+            r"\b(?:let'?s?|lets?)\s+(?:proceed|go\s+ahead|checkout)\b",
+            r"\bgo\s+ahead\s+(?:and\s+)?(?:order|buy|checkout)\b",
         ]
 
-        import re as _re
         for pattern in CART_PATTERNS:
             if _re.search(pattern, msg):
                 print(f"[CartInterceptor] Forced CART_ACTION — matched pattern: '{pattern}'")
@@ -173,14 +192,35 @@ class Router:
         history = self.st_memory.get_history()
         messages = history + [{"role": "user", "content": user_message}]
 
-        raw = chat(
-            system=ROUTER_SYSTEM_PROMPT,
-            messages=messages,
-            max_tokens=CLAUDE_MAX_TOKENS_CLASSIFY,
-            model=CLAUDE_MODEL_CLASSIFY,
-            json_mode=True,
-            temperature=0.1,  # deterministic JSON classification
-        )
+        try:
+            raw = chat(
+                system=ROUTER_SYSTEM_PROMPT,
+                messages=messages,
+                max_tokens=CLAUDE_MAX_TOKENS_CLASSIFY,
+                model=CLAUDE_MODEL_CLASSIFY,
+                json_mode=True,
+                temperature=0.1,  # deterministic JSON classification
+            )
+        except LLMUnavailableError as e:
+            # Real Gemini call failed (not offline mock mode). Fall back to a safe
+            # SEARCH default using the raw message — never invent a category.
+            print(f"[Router] LLM classify unavailable, using safe default: {e}")
+            return self._guard_search_query({
+                "intents": ["SEARCH"],
+                "allergies": {},
+                "preferences": {},
+                "search_recipient": None,
+                "location": None,
+                "deadline": None,
+                "search_query": "gift",
+                "budget_limit": None,
+                "tracking_code": None,
+                "cart_items": None,
+                "trigger_checkout": False,
+                "recipient_name": None,
+                "delivery_address": None,
+                "contact_number": None,
+            }, user_message)
 
         #structured output extraction - json format
         clean = raw.strip()
@@ -191,7 +231,7 @@ class Router:
 
         try:
             result = json.loads(clean)
-            validated = RouterOutput(**result) #pydantic validation 
+            validated = RouterOutput(**result) #pydantic validation
             result = validated.model_dump()
             if isinstance(result.get("intents"), str):
                 result["intents"] = [result["intents"]]
@@ -199,17 +239,17 @@ class Router:
                 result["allergies"] = {}
             if not isinstance(result.get("preferences"), dict):
                 result["preferences"] = {}
-            return result
+            return self._guard_search_query(result, user_message)
 
         except (json.JSONDecodeError, ValueError): #value errors for pydantic errors
-            return {
+            return self._guard_search_query({
                 "intents": ["SEARCH"],
                 "allergies": {},
                 "preferences": {},
                 "search_recipient": None,
                 "location": None,
                 "deadline": None,
-                "search_query": user_message,
+                "search_query": "gift",
                 "budget_limit": None,
                 "tracking_code": None,
                 "cart_items": None,
@@ -217,7 +257,47 @@ class Router:
                 "recipient_name": None,
                 "delivery_address": None,
                 "contact_number": None
-            }
+            }, user_message)
+
+    # ── Deterministic search_query guard ──────────────────────────────────────
+    # Generic gift words that mean "a gift" — NOT a concrete product category.
+    _GENERIC_GIFT_WORDS = {
+        "gift", "gifts", "hadiyak", "hadiya", "thohfa", "thohfe", "present",
+        "presents", "surprise", "ekak", "something", "thelak",
+    }
+
+    def _guard_search_query(self, classification: dict, user_message: str) -> dict:
+        """Stop the LLM from hallucinating a concrete category the user never said.
+
+        If the raw user message used a generic gift word (e.g. "gift ekak oni",
+        "hadiyak") but did NOT literally name the category the LLM returned
+        (e.g. message has no "chocolate" yet search_query == "chocolate"), force
+        search_query back to "gift". Deterministic — does not rely on the LLM
+        obeying the prompt. Directly kills the Father's-Day → "chocolate" bug.
+        """
+        import re as _re
+
+        sq = (classification.get("search_query") or "").strip().lower()
+        if not sq or sq == "gift":
+            return classification
+
+        msg = (user_message or "").lower()
+        msg_tokens = set(_re.findall(r"[a-z']+", msg))
+
+        # Did the user use a generic gift word?
+        used_generic = bool(msg_tokens & self._GENERIC_GIFT_WORDS)
+        # Did the user literally mention the category the LLM returned?
+        # Compare on the first significant word of the query (e.g. "chocolate box" -> "chocolate").
+        sq_head = sq.split()[0] if sq.split() else sq
+        category_in_message = sq_head in msg or sq in msg
+
+        if used_generic and not category_in_message:
+            print(
+                f"[Guard] LLM invented search_query='{classification.get('search_query')}' "
+                f"from a generic gift request — overriding to 'gift'."
+            )
+            classification["search_query"] = "gift"
+        return classification
 
     # ── Context continuity helper ─────────────────────────────────────────────
 
@@ -310,7 +390,7 @@ class Router:
 
         return classification
 
-    async def route_stream(self, user_message: str, recipient_context: dict | None = None, budget_limit: float | None = None):
+    async def route_stream(self, user_message: str, recipient_context: dict | None = None, budget_limit: float | None = None, vibe_check: str | None = None):
         """Streaming version of route() — yields chunks for SEARCH responses."""
         import asyncio
 
@@ -343,16 +423,27 @@ class Router:
 
         print(f"Effective budget_limit : {budget_limit}")
 
+        # Write the effective budget back into the classification so the intent
+        # badge the user sees matches the constraint actually used for search.
+        if budget_limit is not None:
+            classification["budget_limit"] = budget_limit
+
         intents = classification.get("intents", ["SEARCH"])
 
-        # ── CART_ACTION exclusivity enforcement ───────────────────────────────
-        # If the LLM (not the interceptor) returned both CART_ACTION and SEARCH,
-        # drop SEARCH. An action turn must never also spawn a product discovery
-        # loop — that causes duplicate carousels and breaks cart UX.
-        if "CART_ACTION" in intents and "SEARCH" in intents:
+        # ── CART_ACTION + SEARCH handling ────────────────────────────────────
+        # When the LLM intentionally returns both (multi-intent: "add X and find Y"),
+        # we allow them to coexist so both the cart-add and the product search run.
+        # We only strip SEARCH when it looks like an LLM mis-classification (no
+        # explicit search request phrasing alongside the cart action).
+        import re as _re
+        _has_explicit_search = bool(_re.search(
+            r'\b(?:and\s+(?:then\s+)?(?:find|show|search|look\s+for)|also\s+(?:find|show|search)|plus\s+(?:find|show))\b',
+            user_message, _re.IGNORECASE
+        ))
+        if "CART_ACTION" in intents and "SEARCH" in intents and not _has_explicit_search:
             intents = [i for i in intents if i != "SEARCH"]
             classification["intents"] = intents
-            print("[Router] Stripped SEARCH from CART_ACTION turn.")
+            print("[Router] Stripped SEARCH from CART_ACTION turn (no explicit search request).")
 
         print(f"Customer        : {self.customer_id}")
         print(f"Router Decision : {intents}")
@@ -398,7 +489,8 @@ class Router:
                     "trigger_checkout": trigger_checkout,
                     "recipient_name": classification.get("recipient_name"),
                     "delivery_address": classification.get("delivery_address"),
-                    "contact_number": classification.get("contact_number")
+                    "contact_number": classification.get("contact_number"),
+                    "gift_message": classification.get("gift_message"),
                 }
                 yield f"<<CART_UPDATE>>:{json.dumps(cart_update_payload)}"
 
@@ -518,6 +610,13 @@ class Router:
                 
         # 6. Stream search — logistics already running in background
         if "SEARCH" in intents:
+            # Resolve occasion: prefer router-extracted deadline (e.g. "Father's Day"),
+            # fall back to sidebar dropdown value nested under any recipient key.
+            _occasion = classification.get("deadline") or next(
+                (v.get("occasion") for v in (recipient_context or {}).values()
+                 if isinstance(v, dict) and v.get("occasion")),
+                None
+            )
             async for chunk in catalog_agent.run_stream(
                 recipients=all_recipients,
                 search_query=classification.get("search_query") or user_message,
@@ -525,8 +624,9 @@ class Router:
                 new_profile=new_profile,
                 query_vector=query_vector,
                 budget_limit=budget_limit,
-                occasion=classification.get("occasion") or (recipient_context or {}).get("occasion"),
+                occasion=_occasion,
                 user_raw_message=user_message,
+                vibe_check=vibe_check,
             ):
                 if chunk != "<<CLEAR>>":
                     full_response_chunks.append(chunk)

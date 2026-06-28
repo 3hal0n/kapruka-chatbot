@@ -29,15 +29,25 @@ router_sessions: Dict[str, Router] = {}
 import re
 
 def parse_budget_limit(msg: str) -> Optional[float]:
-    """Parse numeric budget limit from user message (e.g. under 5000, less than 5,000)."""
-    pattern = r'(?:under|below|less\s+than|budget\s+of|budget|max|maximum|up\s+to)\s*(?:rs\.?|lkr)?\s*([\d,]+)'
-    match = re.search(pattern, msg, re.IGNORECASE)
-    if match:
-        num_str = match.group(1).replace(",", "")
-        try:
-            return float(num_str)
-        except ValueError:
-            pass
+    """Parse numeric budget limit from user message (English + Sinhala patterns)."""
+    patterns = [
+        # English: keyword immediately before number — "under 5000", "max 3,000", "up to 4500"
+        r'(?:under|below|less\s+than|budget\s+of|max(?:imum)?|up\s+to)\s*(?:rs\.?|lkr)?\s*([\d,]+)',
+        # Sinhala particle: "4500 aduwen / aadu / adu / aduwata / yathe / widin" (number precedes keyword)
+        r'([\d,]+)\s*(?:rs\.?)?\s*(?:aduwen|aduwata|yathe|athare|widin|wenna\s+ona|aadu|adu(?:wen)?)',
+        # Budget word with Sinhala particles between it and the number: "budget eka 4500"
+        r'budget\s+(?:\w+\s+)?([\d,]+)',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, msg, re.IGNORECASE)
+        if match:
+            num_str = match.group(1).replace(",", "")
+            try:
+                val = float(num_str)
+                if val > 0:
+                    return val
+            except ValueError:
+                pass
     return None
 
 
@@ -100,6 +110,22 @@ class ChatRequest(BaseModel):
     budget: Optional[str] = None
     recipient: Optional[str] = None
     occasion: Optional[str] = None
+    vibe_check: Optional[str] = None
+
+
+class GroupGiftItem(BaseModel):
+    id: str
+    name: str
+    price: float
+    quantity: int
+    image_url: Optional[str] = None
+
+
+class GroupGiftRequest(BaseModel):
+    cart: list[GroupGiftItem]
+    subtotal: float
+    total: float
+    currency: str = "LKR"
 
 
 class ResetRequest(BaseModel):
@@ -149,7 +175,7 @@ async def chat_endpoint(request: ChatRequest):
     async def sse_generator():
         start_time = time.time()
         try:
-            async for chunk in router.route_stream(request.message, request.recipient_context, budget_limit=budget_limit):
+            async for chunk in router.route_stream(request.message, request.recipient_context, budget_limit=budget_limit, vibe_check=request.vibe_check):
                 # 1. Classification event
                 if isinstance(chunk, str) and chunk.startswith("<<CLASSIFICATION>>:"):
                     try:
@@ -342,43 +368,74 @@ async def create_order_endpoint(request: OrderRequest):
         )
         logger.info(f"kapruka_create_order result: {result}")
 
-        # Parse checkout URL from MCP response — field names may vary
+        # Parse checkout URL from MCP response — field names may vary.
+        # IMPORTANT: only ever return a REAL link the MCP gave us. We never
+        # fabricate a kapruka.com/checkout/... URL — those 404. When MCP returns
+        # no link, checkout_url stays null and the frontend falls back to the
+        # individual product-page links instead.
         checkout_url = (
             result.get("checkout_url")
             or result.get("payment_url")
             or result.get("url")
             or result.get("order_url")
+            or result.get("payment_link")
+            or result.get("cart_url")
         )
         order_id = (
             result.get("order_id")
             or result.get("order_number")
             or result.get("id")
-            or "RUKI-" + str(int(time.time()))
         )
 
-        # Fallback URL if MCP doesn't return a direct link
-        if not checkout_url:
-            checkout_url = f"https://www.kapruka.com/checkout/guest?order_ref={order_id}&items={len(request.cart)}"
-
         return {
-            "status": "success",
+            "status": "success" if checkout_url else "no_link",
             "order_id": order_id,
-            "checkout_url": checkout_url,
-            "message": f"Order {order_id} created successfully."
+            "checkout_url": checkout_url,  # may be null — frontend uses product links
+            "message": (
+                f"Order {order_id} created successfully."
+                if checkout_url else
+                "Order received — open any product's Kapruka page to complete payment."
+            ),
         }
 
     except Exception as e:
         logger.exception(f"kapruka_create_order failed: {e}")
-        # Graceful fallback — still provide a usable checkout link
-        import random, string
-        ref = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        fallback_url = f"https://www.kapruka.com/checkout/guest?order_ref=RUKI-{ref}&items={len(request.cart)}"
+        # No fabricated links. Signal failure honestly; the frontend will guide
+        # the user to the real product pages instead.
         return {
-            "status": "fallback",
-            "order_id": f"RUKI-{ref}",
-            "checkout_url": fallback_url,
-            "message": "Order submitted (offline fallback)."
+            "status": "error",
+            "order_id": None,
+            "checkout_url": None,
+            "message": "Couldn't reach Kapruka checkout right now — tap a product's "
+                       "“Buy on Kapruka” link to complete your purchase directly.",
         }
+
+
+@app.post("/api/group-gift/create")
+async def create_group_gift(request: GroupGiftRequest):
+    """
+    Serializes the current cart into a base64 group-gift token.
+    Returns the opaque token; the frontend assembles the full shareable URL
+    so the backend never needs to know its own public hostname.
+    """
+    import base64
+
+    payload = {
+        "cart": [item.model_dump() for item in request.cart],
+        "subtotal": request.subtotal,
+        "total": request.total,
+        "currency": request.currency,
+        "gift_id": f"GG-{int(time.time())}",
+        "created_at": int(time.time()),
+    }
+    token = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+
+    return {
+        "token": token,
+        "gift_id": payload["gift_id"],
+        "item_count": len(request.cart),
+        "total": request.total,
+    }
 
 
 @app.get("/health")

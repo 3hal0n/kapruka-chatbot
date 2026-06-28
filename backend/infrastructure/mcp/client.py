@@ -385,12 +385,21 @@ async def kapruka_search_products(query: str, limit: Optional[int] = None) -> di
             else:
                 cat_name = str(cat_val or "")
                 
+            # Surface a real Kapruka product-page URL if the MCP provides one
+            # (field name varies). The frontend uses this for the "Buy on Kapruka"
+            # link and only constructs a fallback URL when this is absent.
+            product_url = (
+                p.get("url") or p.get("product_url") or p.get("link")
+                or p.get("web_url") or p.get("permalink") or ""
+            )
             mapped_p = {
                 **p,
                 "specs": p.get("summary") or "",
                 "availability": "In Stock" if p.get("in_stock") else "Out of Stock",
                 "stock": "In Stock" if p.get("in_stock") else "Out of Stock",
                 "category": cat_name,
+                "url": product_url,
+                "product_url": product_url,
                 "checkout_ready": p.get("in_stock", True)
             }
             mapped_products.append(mapped_p)

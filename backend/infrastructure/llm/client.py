@@ -22,6 +22,23 @@ logger = logging.getLogger("kapruka-llm-client")
 # ── Default model ─────────────────────────────────────────────────────────────
 DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
+# ── Per-call timeouts (seconds) ───────────────────────────────────────────────
+# Gemini 2.5 Flash can take well over 8s on a cold start, in JSON mode, or with a
+# large system prompt. The previous hard 8.0s timeout caused real calls to fail and
+# silently fall back to canned mock responses (the "please share your details" text).
+# These are generous enough to let the real call complete.
+JSON_TIMEOUT = float(os.getenv("LLM_JSON_TIMEOUT", "20.0"))      # router classification
+STREAM_TIMEOUT = float(os.getenv("LLM_STREAM_TIMEOUT", "30.0"))  # catalog / revise streaming
+
+
+class LLMUnavailableError(RuntimeError):
+    """Raised when a real Gemini call fails (key present but request errored).
+
+    Distinct from mock-mode: callers should handle this with their own graceful
+    fallback (safe-default classification / in-character retry line) rather than
+    the misleading detail-demanding mock payload.
+    """
+
 
 def is_mock_mode() -> bool:
     api_key = os.getenv("GEMINI_API_KEY", "")
@@ -71,8 +88,12 @@ def chat(
 ) -> str:
     """
     Send a single-turn (or multi-turn) chat request to Gemini and return the
-    full response text. Falls back to deterministic mock payloads when
-    GEMINI_API_KEY is not configured.
+    full response text.
+
+    Falls back to deterministic mock payloads ONLY when GEMINI_API_KEY is not
+    configured (genuine offline dev). When a key IS present but the real call
+    fails, raises LLMUnavailableError so the caller can apply its own graceful
+    fallback — we never surface the misleading canned mock on a transient error.
     """
     if is_mock_mode():
         return _mock_response(system, messages, json_mode)
@@ -86,19 +107,25 @@ def chat(
             max_output_tokens=max_tokens,
             temperature=temperature,
             response_mime_type="application/json" if json_mode else "text/plain",
+            # http_options.timeout is in MILLISECONDS and belongs on the config in
+            # google-genai 1.x (passing it to generate_content() raises TypeError).
+            http_options=types.HttpOptions(timeout=int(JSON_TIMEOUT * 1000)),
+            # Disable Gemini 2.5 Flash "thinking" — otherwise reasoning tokens eat
+            # the max_output_tokens budget and truncate the visible reply. We want
+            # fast, direct concierge answers, not chain-of-thought.
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
         )
 
         response = client.models.generate_content(
             model=model,
             contents=contents,
             config=config,
-            http_options=types.HttpOptions(timeout=8.0)
         )
         return response.text.strip()
 
     except Exception as e:
         logger.exception(f"Gemini chat() failed: {e}")
-        return _mock_response(system, messages, json_mode)
+        raise LLMUnavailableError(str(e)) from e
 
 
 # ── Synchronous streaming chat_stream() ───────────────────────────────────────
@@ -112,7 +139,11 @@ def chat_stream(
 ) -> Generator[str, None, None]:
     """
     Same as chat() but yields text delta chunks as they arrive from Gemini's
-    streaming API. Falls back to a word-by-word mock when offline.
+    streaming API.
+
+    Falls back to a word-by-word mock ONLY in offline dev (no API key). When a
+    key is present but the real call fails, yields a single short, in-character
+    retry line instead of the misleading detail-demanding mock.
     """
     if is_mock_mode():
         yield from _mock_stream(system, messages)
@@ -126,20 +157,23 @@ def chat_stream(
             system_instruction=system,
             max_output_tokens=max_tokens,
             temperature=temperature,
+            # See chat(): timeout (ms) must live on the config in google-genai 1.x.
+            http_options=types.HttpOptions(timeout=int(STREAM_TIMEOUT * 1000)),
+            # Disable "thinking" so reasoning tokens don't consume the reply budget.
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
         )
 
         for chunk in client.models.generate_content_stream(
             model=model,
             contents=contents,
             config=config,
-            http_options=types.HttpOptions(timeout=8.0)
         ):
             if chunk.text:
                 yield chunk.text
 
     except Exception as e:
         logger.exception(f"Gemini chat_stream() failed: {e}")
-        yield from _mock_stream(system, messages)
+        yield "Aiyo, mata podi pressure ekak 😅 — give me one sec and try that again?"
 
 
 # ── Async chat coroutine (for use inside async FastAPI/router contexts) ────────
@@ -229,8 +263,9 @@ def _mock_response(system: str, messages: list[dict], json_mode: bool) -> str:
     elif "toy" in msg_lower:
         search_q = "toy"
     return (
-        f"Aney sure, puluwan machan! For your {search_q}, I checked the live Kapruka catalog. "
-        "To place the order, please share: Recipient's Name, Delivery Address, and Phone Number."
+        f"Aney sure, puluwan machan! For your {search_q}, I checked the live Kapruka catalog "
+        "and pulled a few lovely picks below. Tap any product's “Buy on Kapruka” link to grab it. "
+        "Who's this gift for? \U0001F381"
     )
 
 

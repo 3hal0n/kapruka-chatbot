@@ -2,13 +2,14 @@
 
 import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  X, 
-  ShoppingCart, 
-  Minus, 
-  Plus, 
+import {
+  X,
+  ShoppingCart,
+  Minus,
+  Plus,
   PackageOpen,
-  Loader2
+  Loader2,
+  Users,
 } from "lucide-react";
 
 export interface CartItem {
@@ -17,6 +18,7 @@ export interface CartItem {
   price: number;
   image_url: string;
   quantity: number;
+  url?: string; // real Kapruka product-page URL for direct checkout
 }
 
 interface RightCartProps {
@@ -29,6 +31,7 @@ interface RightCartProps {
   open: boolean;
   onClose: () => void;
   isOrderLoading?: boolean;
+  onGroupGift?: () => void;
 }
 
 export function RightCart({
@@ -41,6 +44,7 @@ export function RightCart({
   open,
   onClose,
   isOrderLoading = false,
+  onGroupGift,
 }: RightCartProps) {
   const content = (
     <div className="flex h-full w-[320px] shrink-0 flex-col gap-4 overflow-hidden border-l border-border bg-background p-4">
@@ -66,7 +70,7 @@ export function RightCart({
             <div>
               <p className="text-sm font-black uppercase tracking-wider text-foreground">Your cart is empty</p>
               <p className="mt-1 text-xs font-medium leading-relaxed text-muted-foreground">
-                Ask Ruki for a gift or tap <span className="font-bold text-primary">Add to Cart</span> on any product to build an order link.
+                Ask Ruki for a gift or tap <span className="font-bold text-primary">Add to Cart</span> on any product, then buy it on Kapruka.
               </p>
             </div>
             <div className="w-full space-y-2">
@@ -114,7 +118,7 @@ export function RightCart({
                     >
                       <Minus className="h-3 w-3" />
                     </button>
-                    <span className="min-w-[20px] text-center text-sm font-bold select-none">{item.quantity}</span>
+                    <span className="min-w-5 text-center text-sm font-bold select-none">{item.quantity}</span>
                     <button
                       id={`cart-inc-${item.id.toLowerCase().replace(/_/g, "-")}`}
                       onClick={() => updateQuantity(item.id, 1)}
@@ -153,10 +157,21 @@ export function RightCart({
           style={{ backgroundColor: "#FFD700", color: "#0B0410" }}
         >
           {isOrderLoading ? (
-            <><Loader2 className="h-4 w-4 animate-spin" /> Placing Order...</>
+            <><Loader2 className="h-4 w-4 animate-spin" /> Opening Kapruka...</>
           ) : (
-            "Create Order Link"
+            "Buy on Kapruka"
           )}
+        </button>
+
+        {/* Group Gift — split costs with friends */}
+        <button
+          id="group-gift-btn"
+          onClick={onGroupGift}
+          disabled={cart.length === 0}
+          className="mt-2 w-full rounded-xl py-2.5 text-sm font-bold inline-flex items-center justify-center gap-2 border border-white/20 bg-white/10 text-white transition-all duration-300 hover:bg-white/20 active:scale-[0.98] disabled:opacity-40 cursor-pointer"
+        >
+          <Users className="h-4 w-4" />
+          Split with Friends
         </button>
       </div>
     </div>

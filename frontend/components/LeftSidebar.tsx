@@ -2,13 +2,13 @@
 
 import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-  X, 
-  ChevronDown, 
-  Sun, 
+import {
+  X,
+  ChevronDown,
+  Sun,
   Moon,
-  Wallet, 
-  User, 
+  Wallet,
+  User,
   PartyPopper,
   Compass,
   Layers,
@@ -16,7 +16,8 @@ import {
   ArrowRightLeft,
   FileSearch,
   MessageSquareDot,
-  ShoppingBag
+  ShoppingBag,
+  Sparkles,
 } from "lucide-react";
 
 export type Mode =
@@ -49,6 +50,8 @@ interface LeftSidebarProps {
   onClose: () => void;
   theme: "light" | "dark";
   toggleTheme: () => void;
+  vibeCheck: string;
+  setVibeCheck: (v: string) => void;
 }
 
 export function LeftSidebar({
@@ -64,13 +67,15 @@ export function LeftSidebar({
   onClose,
   theme,
   toggleTheme,
+  vibeCheck,
+  setVibeCheck,
 }: LeftSidebarProps) {
   const content = (
-    <div className="flex h-full w-[260px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-background p-4 select-none">
+    <div className="flex h-full w-65 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-background p-4 select-none">
       <div className="flex items-center justify-end md:hidden">
-        <button 
+        <button
           id="sidebar-close-btn-mobile"
-          onClick={onClose} 
+          onClick={onClose}
           className="grid h-9 w-9 place-items-center rounded-xl transition-all duration-300 hover:bg-muted"
         >
           <X className="h-5 w-5" />
@@ -96,11 +101,13 @@ export function LeftSidebar({
                 className={
                   "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all duration-300 ease-in-out " +
                   (active
-                    ? "bg-primary text-white shadow-sm shadow-[0_0_15px_rgba(255,255,255,0.15)]"
+                    ? "bg-primary text-white shadow-[0_0_15px_rgba(255,255,255,0.15)]"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted")
                 }
               >
-                <Icon className={"h-4 w-4 " + (active ? "text-amber" : "text-muted-foreground")} />
+                <Icon
+                  className={"h-4 w-4 " + (active ? "text-amber" : "text-muted-foreground")}
+                />
                 {label}
               </button>
             );
@@ -112,15 +119,21 @@ export function LeftSidebar({
       <div className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
         <h2 className="mb-3 text-sm font-extrabold tracking-tight">Preferences</h2>
         <div className="space-y-2.5">
-          {/* Budget Selection */}
+
+          {/* Budget */}
           <div>
-            <label htmlFor="budget-select" className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Budget</label>
+            <label
+              htmlFor="budget-select"
+              className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-muted-foreground"
+            >
+              Budget
+            </label>
             <div className="relative">
               <Wallet className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <select 
+              <select
                 id="budget-select"
                 value={budget}
-                onChange={e => setBudget(e.target.value)}
+                onChange={(e) => setBudget(e.target.value)}
                 className="w-full appearance-none rounded-lg border border-border bg-surface py-1.5 pl-8 pr-7 text-sm font-semibold outline-none transition-all duration-300 ease-in-out hover:bg-muted focus:ring-2 focus:ring-ring/40"
               >
                 <option value="">Any budget</option>
@@ -133,15 +146,20 @@ export function LeftSidebar({
             </div>
           </div>
 
-          {/* Recipient Selection */}
+          {/* Recipient */}
           <div>
-            <label htmlFor="recipient-select" className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Recipient</label>
+            <label
+              htmlFor="recipient-select"
+              className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-muted-foreground"
+            >
+              Recipient
+            </label>
             <div className="relative">
               <User className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <select 
+              <select
                 id="recipient-select"
                 value={recipient}
-                onChange={e => setRecipient(e.target.value)}
+                onChange={(e) => setRecipient(e.target.value)}
                 className="w-full appearance-none rounded-lg border border-border bg-surface py-1.5 pl-8 pr-7 text-sm font-semibold outline-none transition-all duration-300 ease-in-out hover:bg-muted focus:ring-2 focus:ring-ring/40"
               >
                 <option value="">Anyone</option>
@@ -154,27 +172,57 @@ export function LeftSidebar({
             </div>
           </div>
 
-          {/* Occasion Selection */}
+          {/* Occasion */}
           <div>
-            <label htmlFor="occasion-select" className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Occasion</label>
+            <label
+              htmlFor="occasion-select"
+              className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-muted-foreground"
+            >
+              Occasion
+            </label>
             <div className="relative">
               <PartyPopper className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-              <select 
+              <select
                 id="occasion-select"
                 value={occasion}
-                onChange={e => setOccasion(e.target.value)}
+                onChange={(e) => setOccasion(e.target.value)}
                 className="w-full appearance-none rounded-lg border border-border bg-surface py-1.5 pl-8 pr-7 text-sm font-semibold outline-none transition-all duration-300 ease-in-out hover:bg-muted focus:ring-2 focus:ring-ring/40"
               >
                 <option value="">Any occasion</option>
                 <option value="Birthday">Birthday</option>
                 <option value="Anniversary">Anniversary</option>
                 <option value="Christmas">Christmas</option>
-                <option value="Mother's Day">Mother's Day</option>
-                <option value="Father's Day">Father's Day</option>
+                <option value="Mother's Day">Mother&apos;s Day</option>
+                <option value="Father's Day">Father&apos;s Day</option>
               </select>
               <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             </div>
           </div>
+
+          {/* Vibe Check — AI Personality Analyzer */}
+          <div>
+            <label
+              htmlFor="vibe-check-input"
+              className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-muted-foreground"
+            >
+              <Sparkles className="h-3 w-3 text-amber" />
+              Analyze Recipient Vibe
+            </label>
+            <textarea
+              id="vibe-check-input"
+              value={vibeCheck}
+              onChange={(e) => setVibeCheck(e.target.value)}
+              placeholder="e.g. Enjoys Formula 1, dark aesthetics, codes all night..."
+              rows={3}
+              className="w-full resize-none rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-medium outline-none transition-all duration-300 ease-in-out hover:bg-muted focus:ring-2 focus:ring-ring/40 placeholder:text-muted-foreground/50 leading-relaxed select-text"
+            />
+            {vibeCheck.trim() && (
+              <p className="mt-1 text-[10px] font-semibold text-primary/70">
+                ✦ Ruki will reason about why products match this vibe
+              </p>
+            )}
+          </div>
+
         </div>
       </div>
     </div>
