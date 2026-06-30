@@ -176,6 +176,50 @@ def chat_stream(
         yield "Aiyo, mata podi pressure ekak 😅 — give me one sec and try that again?"
 
 
+# ── Text embeddings (Gemini) ──────────────────────────────────────────────────
+# Replaces the local sentence-transformers/PyTorch encoder so the slim container
+# doesn't pull heavy CUDA tensors. Vectors come from the hosted Gemini embedding
+# model instead — no local tensor computing required.
+
+DEFAULT_EMBED_MODEL = os.getenv("GEMINI_EMBED_MODEL", "gemini-embedding-001")
+
+
+def embed_texts(
+    texts: list[str],
+    model: str = DEFAULT_EMBED_MODEL,
+    output_dim: int | None = None,
+) -> list[list[float]]:
+    """Embed a batch of strings into vectors using the hosted Gemini model.
+
+    `output_dim` truncates the Matryoshka embedding to a fixed size so it matches
+    the Qdrant collection's configured vector dimension. Raises if the API is
+    unavailable so callers (ingest / semantic search) fail loudly rather than
+    silently storing bad vectors.
+    """
+    if not texts:
+        return []
+    if is_mock_mode():
+        raise RuntimeError("Embeddings unavailable: GEMINI_API_KEY is not set.")
+
+    client = _get_client()
+    config = None
+    if output_dim:
+        config = types.EmbedContentConfig(output_dimensionality=output_dim)
+
+    response = client.models.embed_content(model=model, contents=texts, config=config)
+    return [list(e.values) for e in response.embeddings]
+
+
+def embed_text(
+    text: str,
+    model: str = DEFAULT_EMBED_MODEL,
+    output_dim: int | None = None,
+) -> list[float]:
+    """Embed a single string. Convenience wrapper around embed_texts()."""
+    vectors = embed_texts([text], model=model, output_dim=output_dim)
+    return vectors[0] if vectors else []
+
+
 # ── Async chat coroutine (for use inside async FastAPI/router contexts) ────────
 
 async def async_chat(

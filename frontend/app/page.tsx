@@ -13,8 +13,12 @@ import { ShoppingContextCard } from "@/components/ShoppingContextCard";
 import { ProductCard, Product, kaprukaBuyUrl } from "@/components/ProductCard";
 import { ChatInputCapsule } from "@/components/ChatInputCapsule";
 import { RukiMascot, MascotState } from "@/components/RukiMascot";
+import { GiftProfile, daysUntil, formatOccasionDate } from "@/data/giftProfiles";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+const BACKEND_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  "http://localhost:8000";
 const generateUserId = () => `ruki_${Math.random().toString(36).substring(2, 10)}`;
 
 interface Message {
@@ -103,6 +107,13 @@ export default function RukiPage() {
   const [budget, setBudget] = useState("");
   const [recipient, setRecipient] = useState("");
   const [occasion, setOccasion] = useState("");
+
+  // ── Occasion Vibe Calendar — currently selected gift profile
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  // DB UUID of the active profile (sent as profile_id on chat turns), plus a
+  // cache mapping static profile id -> DB UUID so we persist each only once.
+  const [activeProfileDbId, setActiveProfileDbId] = useState<string | null>(null);
+  const profileDbIdCache = useRef<Record<string, string>>({});
 
   // ── Vibe Check (AI personality analyzer)
   const [vibeCheck, setVibeCheck] = useState("");
@@ -321,7 +332,85 @@ export default function RukiPage() {
     setIsGroupGiftModalOpen(true);
   };
 
+  // Persist a calendar profile to the backend exactly once, caching its DB UUID.
+  // Converts the static recurring month/day into the next-occurrence date and the
+  // single allergen into the allergies array the API expects.
+  const ensureProfilePersisted = async (profile: GiftProfile) => {
+    const cached = profileDbIdCache.current[profile.id];
+    if (cached) {
+      setActiveProfileDbId(cached);
+      return;
+    }
+    try {
+      const now = new Date();
+      const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      let year = now.getFullYear();
+      if (new Date(year, profile.month - 1, profile.day) < todayMidnight) year += 1;
+      const targetDate = `${year}-${String(profile.month).padStart(2, "0")}-${String(profile.day).padStart(2, "0")}`;
+
+      const res = await fetch(`${BACKEND_URL}/api/profiles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userIdRef.current,
+          recipient_name: profile.name,
+          occasion: profile.occasion,
+          target_date: targetDate,
+          vibe_summary: profile.vibeSummary,
+          allergies: profile.allergen ? [profile.allergen] : [],
+        }),
+      });
+      if (!res.ok) return; // DB down / 503 — stay graceful, no profile_id
+      const data = await res.json();
+      if (data?.id) {
+        profileDbIdCache.current[profile.id] = data.id;
+        setActiveProfileDbId(data.id);
+      }
+    } catch {
+      /* offline — proactive greeting + filters still work without the guardrail */
+    }
+  };
+
   // ── Send message via SSE
+  // ── Occasion Vibe Calendar: clicking a saved gift profile patches the global
+  // filter state and fires a proactive Ruki greeting (a background chat payload
+  // event) so the conversation kicks off with full context.
+  const handleSelectGiftProfile = (profile: GiftProfile) => {
+    // 1. Patch global filters
+    setActiveProfileId(profile.id);
+    setRecipient(profile.name);
+    setOccasion(profile.occasion);
+    setBudget(profile.budget);
+    setVibeCheck(profile.vibeSummary);
+    setLeftOpen(false); // close the mobile drawer if open
+
+    // 1b. Persist the profile to the DB (once) and remember its UUID so that
+    // subsequent chat turns carry profile_id — engaging the backend short-circuit
+    // and the DB-driven allergen guardrail. Best-effort: failures don't block UX.
+    void ensureProfilePersisted(profile);
+
+    // 2. Build Ruki's proactive greeting
+    const days = daysUntil(profile.month, profile.day);
+    const whenText = days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`;
+    const allergenClause = profile.allergen
+      ? ` Last time we checked, they avoid ${profile.allergen}.`
+      : "";
+    const greeting =
+      `Machan, I see ${profile.name}'s ${profile.occasion} is coming up ${whenText} ` +
+      `(${formatOccasionDate(profile.month, profile.day)})!${allergenClause} ` +
+      `Let's pick a great gift around ${profile.budget} — shall I pull up some ` +
+      `${profile.occasion.toLowerCase()} ideas for ${profile.name}?`;
+
+    setMessages(prev => [
+      ...prev,
+      { id: `vibe-${profile.id}-${Date.now()}`, sender: "ai", text: greeting, intents: ["SEARCH"] },
+    ]);
+
+    // 3. Bring the mascot to life
+    setMascotHappy(true);
+    setTimeout(() => setMascotHappy(false), 2200);
+  };
+
   const handleSendMessage = async () => {
     if (!messageInput.trim()) return;
     const userText = messageInput;
@@ -336,7 +425,7 @@ export default function RukiPage() {
     ctx[recipient.toLowerCase() || "default"] = { budget: budget || undefined, occasion: occasion || undefined, location: "Colombo" };
 
     try {
-      const resp = await fetch(`${BACKEND_URL}/api/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userIdRef.current, message: userText, recipient_context: ctx, budget: budget || undefined, recipient: recipient || undefined, occasion: occasion || undefined, vibe_check: vibeCheck.trim() || undefined }) });
+      const resp = await fetch(`${BACKEND_URL}/api/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userIdRef.current, message: userText, recipient_context: ctx, budget: budget || undefined, recipient: recipient || undefined, occasion: occasion || undefined, vibe_check: vibeCheck.trim() || undefined, profile_id: activeProfileDbId || undefined }) });
       if (!resp.ok || !resp.body) throw new Error("SSE error");
 
       const reader = resp.body.getReader(); const dec = new TextDecoder("utf-8");
@@ -448,7 +537,7 @@ export default function RukiPage() {
 
       {/* Main content layout below header */}
       <div className="flex flex-1 overflow-hidden">
-        <LeftSidebar mode={mode} setMode={setMode} budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} open={leftOpen} onClose={() => setLeftOpen(false)} theme={theme} toggleTheme={toggleTheme} vibeCheck={vibeCheck} setVibeCheck={setVibeCheck} />
+        <LeftSidebar mode={mode} setMode={setMode} budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} open={leftOpen} onClose={() => setLeftOpen(false)} theme={theme} toggleTheme={toggleTheme} vibeCheck={vibeCheck} setVibeCheck={setVibeCheck} onSelectProfile={handleSelectGiftProfile} activeProfileId={activeProfileId} />
 
         {/* Center workspace */}
         <main className="flex flex-1 flex-col overflow-hidden">

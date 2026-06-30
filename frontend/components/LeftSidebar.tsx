@@ -19,6 +19,8 @@ import {
   ShoppingBag,
   Sparkles,
 } from "lucide-react";
+import { OccasionCalendar } from "@/components/OccasionCalendar";
+import { GiftProfile } from "@/data/giftProfiles";
 
 export type Mode =
   | "Smart Shopping"
@@ -52,6 +54,8 @@ interface LeftSidebarProps {
   toggleTheme: () => void;
   vibeCheck: string;
   setVibeCheck: (v: string) => void;
+  onSelectProfile: (profile: GiftProfile) => void;
+  activeProfileId?: string | null;
 }
 
 export function LeftSidebar({
@@ -69,6 +73,8 @@ export function LeftSidebar({
   toggleTheme,
   vibeCheck,
   setVibeCheck,
+  onSelectProfile,
+  activeProfileId,
 }: LeftSidebarProps) {
   const content = (
     <div className="flex h-full w-65 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-background p-4 select-none">
@@ -225,6 +231,9 @@ export function LeftSidebar({
 
         </div>
       </div>
+
+      {/* Occasion Vibe Calendar & Gift Countdown */}
+      <OccasionCalendar onSelectProfile={onSelectProfile} activeId={activeProfileId} />
     </div>
   );
 

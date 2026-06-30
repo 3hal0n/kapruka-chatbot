@@ -1,7 +1,6 @@
 google-genai
 playwright
 qdrant-client
-sentence-transformers
 numpy
 pyyaml
 python-dotenv
@@ -11,3 +10,7 @@ uvicorn
 mcp
 httpx
 anyio
+# Relational DB layer (Occasion Vibe Calendar gift profiles)
+SQLAlchemy>=2.0
+asyncpg          # PostgreSQL async driver (production)
+aiosqlite        # SQLite async driver (zero-config dev fallback)

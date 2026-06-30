@@ -333,7 +333,7 @@ def _sanitise_search_query(query: str) -> str:
     return q if q else "gift"
 
 
-async def run_stream(recipients: set, search_query: str, old_profile: dict, new_profile: dict, query_vector: list = None, budget_limit: float = None, occasion: str = None, user_raw_message: str = "", vibe_check: str = None):
+async def run_stream(recipients: set, search_query: str, old_profile: dict, new_profile: dict, query_vector: list = None, budget_limit: float = None, occasion: str = None, user_raw_message: str = "", vibe_check: str = None, profile_allergies: list = None):
     from infrastructure.mcp.client import kapruka_search_products
     import asyncio
 
@@ -561,6 +561,41 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
             yield (f"I couldn't find any products under LKR {int(budget_limit)} matching your search. "
                    f"Try raising your budget or searching a different category!")
             return
+
+    # ── DB-DRIVEN HARD-STOP ALLERGEN PURGE (definitive gate) ──────────────────
+    # Right before streaming the product carousel, read the saved profile's
+    # allergens and run an absolute, non-LLM Python sweep. This is the last line
+    # of the zero-trust guardrail — nothing flagged ever reaches the UI.
+    if profile_allergies:
+        danger_words = [str(a).lower().strip() for a in profile_allergies if str(a).strip()]
+        if danger_words:
+            pre_count = len(filtered_products)
+            # Scan every text field the live MCP product carries (name, plus the
+            # specs/summary that Kapruka returns in place of a "description") so a
+            # flagged ingredient anywhere in the listing triggers the purge.
+            def _haystack(p: dict) -> str:
+                return " ".join(
+                    str(p.get(f) or "")
+                    for f in ("name", "description", "specs", "summary", "category")
+                ).lower()
+
+            filtered_products = [
+                p for p in filtered_products
+                if not any(kw in _haystack(p) for kw in danger_words)
+            ]
+            removed = pre_count - len(filtered_products)
+            if removed:
+                print(
+                    f"[HardStop:ProfileAllergenPurge] Removed {removed} product(s) "
+                    f"matching profile allergens {danger_words}. "
+                    f"{len(filtered_products)} remain."
+                )
+            if not filtered_products:
+                yield (
+                    "Hmm, everything I found might not be safe given the allergens "
+                    "on file. Let me know a different category and I'll keep them safe!"
+                )
+                return
 
     # Yield filtered products as metadata token
     yield f"<<PRODUCTS>>:{json.dumps(filtered_products)}"
