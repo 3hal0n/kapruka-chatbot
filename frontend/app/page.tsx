@@ -9,7 +9,7 @@ import { RightCart, CartItem } from "@/components/RightCart";
 import { GroupGiftModal } from "@/components/GroupGiftModal";
 import { AssistantBubble } from "@/components/AssistantBubble";
 import { UserBubble } from "@/components/UserBubble";
-import { ShoppingContextCard } from "@/components/ShoppingContextCard";
+import { Hero } from "@/components/Hero";
 import { ProductCard, Product, kaprukaBuyUrl } from "@/components/ProductCard";
 import { ChatInputCapsule } from "@/components/ChatInputCapsule";
 import { RukiMascot, MascotState } from "@/components/RukiMascot";
@@ -134,10 +134,12 @@ export default function RukiPage() {
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [isAudioActive, setIsAudioActive] = useState(true);
 
-  // ── Theme
-  const [theme, setTheme] = useState<"light" | "dark">("light");
+  // ── Theme — Premium Ultra Dark is the default system state; Light is opt-in.
+  // We toggle a `light` class (dark = the class-less :root default) so first
+  // paint is already dark with no flash-of-light before hydration.
+  const [theme, setTheme] = useState<"light" | "dark">("dark");
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
+    document.documentElement.classList.toggle("light", theme === "light");
   }, [theme]);
   const toggleTheme = () => setTheme(p => p === "light" ? "dark" : "light");
 
@@ -504,6 +506,10 @@ export default function RukiPage() {
     setStreamedText(""); setCurrentStatus(null); setCurrentIntents([]); setIsTyping(false);
   };
 
+  // Cinematic empty-state: shown before the first user message, replacing the
+  // plain greeting bubble. Fades into the live chat thread on first send.
+  const showHero = messages.length <= 1 && !isTyping && !streamedText;
+
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground antialiased font-sans">
 
@@ -630,22 +636,37 @@ export default function RukiPage() {
 
               {/* Chat thread */}
               <div ref={scrollViewportRef} className="scroll-slim flex-1 overflow-y-auto h-full space-y-5 px-4 pb-24 pt-6 md:px-6 md:pb-24 md:pt-6">
-                {messages.map((msg, i) => (
+                {!showHero && messages.map((msg, i) => (
                   <div key={msg.id || i} className="space-y-4">
                     {msg.sender === "ai" ? <AssistantBubble intents={msg.intents} latency={msg.latency}>{msg.text}</AssistantBubble> : <UserBubble>{msg.text}</UserBubble>}
                     
                     {msg.products && msg.products.length > 0 && (
-                      <motion.div initial="hidden" animate="show" variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08 } } }} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                        {msg.products.map(p => (
-                          <ProductCard
-                            key={p.id}
-                            product={p}
-                            onAdd={() => handleAddToCart(p)}
-                            mode={mode}
-                            onAddToBox={(prod, rect) => handleAddToBox(prod, rect)}
-                          />
-                        ))}
-                      </motion.div>
+                      <div>
+                        <div className="mb-2 flex items-center justify-between px-0.5">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground select-none">
+                            {msg.products.length} live matches
+                          </span>
+                          <span className="text-[11px] font-semibold text-muted-foreground select-none md:hidden">Swipe →</span>
+                        </div>
+                        {/* Horizontal product carousel — crisp snap scrolling */}
+                        <motion.div
+                          initial="hidden"
+                          animate="show"
+                          variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08 } } }}
+                          className="scroll-hidden -mx-1 flex snap-x snap-mandatory gap-4 overflow-x-auto px-1 pb-3"
+                        >
+                          {msg.products.map(p => (
+                            <div key={p.id} className="w-60 shrink-0 snap-start sm:w-64">
+                              <ProductCard
+                                product={p}
+                                onAdd={() => handleAddToCart(p)}
+                                mode={mode}
+                                onAddToBox={(prod, rect) => handleAddToBox(prod, rect)}
+                              />
+                            </div>
+                          ))}
+                        </motion.div>
+                      </div>
                     )}
 
                     {/* High-contrast inline alert card or empty search state illustration */}
@@ -699,8 +720,8 @@ export default function RukiPage() {
 
                 {streamedText && <AssistantBubble>{streamedText}</AssistantBubble>}
 
-                {messages.length <= 1 && !isTyping && (
-                  <ShoppingContextCard budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} onContextUpdated={(type, val) => setMessages(prev => [...prev, { id: `sys-${Date.now()}`, sender: "ai", text: `Context updated: ${type.toUpperCase()} set to "${val}".` }])} theme={theme} />
+                {showHero && (
+                  <Hero budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} onContextUpdated={(type, val) => setMessages(prev => [...prev, { id: `sys-${Date.now()}`, sender: "ai", text: `Context updated: ${type.toUpperCase()} set to "${val}".` }])} theme={theme} />
                 )}
 
                 <AnimatePresence mode="wait">

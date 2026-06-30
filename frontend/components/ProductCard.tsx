@@ -97,6 +97,7 @@ export function ProductCard({ product, onAdd, mode, onAddToBox }: ProductCardPro
   const stock = product.stock_level
     ? `In stock (${product.stock_level})`
     : product.stock || "In stock (low)";
+  const isLowStock = /low|few|limited/i.test(stock);
   const imageUrl = getProductImage(product);
 
   const cartBtnId = `add-to-cart-btn-${code.toLowerCase().replace(/_/g, "-")}`;
@@ -117,7 +118,7 @@ export function ProductCard({ product, onAdd, mode, onAddToBox }: ProductCardPro
     <motion.div
       variants={itemVariants}
       whileHover={{ y: -4 }}
-      className="flex flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-sm transition-shadow duration-300 hover:shadow-md"
+      className="group flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-sm transition-all duration-300 hover:shadow-xl hover:shadow-primary-glow/30 hover:border-primary/40"
     >
       {/* Product image */}
       <div className="relative aspect-square overflow-hidden bg-muted">
@@ -125,8 +126,15 @@ export function ProductCard({ product, onAdd, mode, onAddToBox }: ProductCardPro
           src={imageUrl}
           alt={product.name}
           loading="lazy"
-          className="h-full w-full object-cover transition-transform duration-500 hover:scale-105"
+          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
+        {/* Live inventory warning (10% accent reserved for urgency) */}
+        {isLowStock && !isBoxMode && (
+          <div className="absolute top-2 left-2 flex items-center gap-1 rounded-full bg-amber px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-foreground shadow select-none">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-foreground" />
+            Low stock
+          </div>
+        )}
         {/* Gift Box mode badge overlay */}
         {isBoxMode && (
           <div className="absolute top-2 right-2 rounded-full bg-primary/90 px-2 py-0.5 text-[10px] font-bold text-primary-foreground shadow select-none">

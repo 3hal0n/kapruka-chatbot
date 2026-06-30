@@ -42,10 +42,10 @@ export function ShoppingContextCard({
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="rounded-2xl border border-border bg-surface p-5 shadow-sm space-y-4"
+      className="glass glow-primary rounded-2xl p-5 space-y-4"
     >
       <div>
-        <h4 className="text-base font-extrabold tracking-tight text-primary">Set shopping context</h4>
+        <h4 className="text-base font-extrabold tracking-tight text-foreground">Set shopping context</h4>
         <p className="mt-1 text-sm font-medium text-muted-foreground">
           I detected details from your message and only need anything missing before answering it.
         </p>
@@ -92,18 +92,20 @@ function ContextRow({ title, items, value, onClick, theme }: ContextRowProps) {
         {items.map((item) => {
           const active = value === item;
           
+          // 60-30-10: active selection uses the Kapruka Purple brand colour
+          // (gold is reserved exclusively for conversion CTAs).
           let bgVal = "rgba(255, 255, 255, 0.03)";
           let colorVal = "#C8B3E4";
           let borderVal = "rgba(255, 255, 255, 0.1)";
 
           if (theme === "light") {
-            bgVal = active ? "#441B71" : "#F9FAFB";
+            bgVal = active ? "#3C1B63" : "#F9FAFB";
             colorVal = active ? "#ffffff" : "#4B5563";
-            borderVal = active ? "#441B71" : "#D1D5DB";
+            borderVal = active ? "#3C1B63" : "#D1D5DB";
           } else {
-            bgVal = active ? "#FFD700" : "rgba(255, 255, 255, 0.03)";
-            colorVal = active ? "#0B0410" : "#C8B3E4";
-            borderVal = active ? "#FFD700" : "rgba(255, 255, 255, 0.1)";
+            bgVal = active ? "#3C1B63" : "rgba(255, 255, 255, 0.04)";
+            colorVal = active ? "#ffffff" : "#C8B3E4";
+            borderVal = active ? "#6D28D9" : "rgba(255, 255, 255, 0.1)";
           }
 
           return (

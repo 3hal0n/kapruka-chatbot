@@ -2,12 +2,26 @@
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence, useAnimation } from "framer-motion";
+import { DotLottieReact, type DotLottie } from "@lottiefiles/dotlottie-react";
 
 export type MascotState = "idle" | "thinking" | "happy" | "typing" | "speaking";
 
 interface RukiMascotProps {
   state?: MascotState;
 }
+
+// Self-hosted Lottie character (swap this single path to change the mascot).
+const MASCOT_SRC = "/lottie/ruki-bot.json";
+
+// Playback speed per conversational state — gives one coherent character
+// distinct energy levels instead of swapping between mismatched clips.
+const STATE_SPEED: Record<MascotState, number> = {
+  idle: 1,
+  thinking: 0.6,
+  typing: 1.45,
+  speaking: 1.4,
+  happy: 1.9,
+};
 
 const CLICK_MESSAGES = [
   "Ayubōwan! 🎁",
@@ -20,7 +34,112 @@ const CLICK_MESSAGES = [
   "Gifts make people happy! 🎀",
 ];
 
+/**
+ * RukiMascot — premium DotLottie character driven by conversational state.
+ * Falls back to the bespoke on-brand SVG (RukiMascotSvg) if the WASM player
+ * fails to load or render (e.g. offline / CDN blocked), so the UI never breaks.
+ */
 export function RukiMascot({ state = "idle" }: RukiMascotProps) {
+  const [failed, setFailed] = useState(false);
+  const [clickIdx, setClickIdx] = useState(0);
+  const [showBubble, setShowBubble] = useState(false);
+  const dotRef = useRef<DotLottie | null>(null);
+  const stateRef = useRef<MascotState>(state);
+  const bubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const controls = useAnimation();
+
+  // Keep the latest state available to the async "ready" handler.
+  stateRef.current = state;
+
+  // Re-tune playback energy whenever the conversational state changes.
+  useEffect(() => {
+    const dl = dotRef.current;
+    if (!dl) return;
+    try { dl.setSpeed(STATE_SPEED[state] ?? 1); } catch { /* not ready yet */ }
+  }, [state]);
+
+  // Joyous jump overlay when entering the happy state (cart add / preference click).
+  useEffect(() => {
+    if (state !== "happy") return;
+    controls.start({
+      y: [0, -16, 0, -8, 0],
+      scale: [1, 1.12, 0.96, 1.06, 1],
+      transition: { duration: 0.9, ease: "easeInOut" },
+    });
+  }, [state, controls]);
+
+  const setRef = useCallback((dl: DotLottie | null) => {
+    dotRef.current = dl;
+    if (!dl) return;
+    dl.addEventListener("loadError", () => setFailed(true));
+    dl.addEventListener("renderError", () => setFailed(true));
+    dl.addEventListener("ready", () => {
+      try { dl.setSpeed(STATE_SPEED[stateRef.current] ?? 1); } catch { /* noop */ }
+    });
+  }, []);
+
+  const handleClick = useCallback(async () => {
+    if (bubbleTimer.current) clearTimeout(bubbleTimer.current);
+    setClickIdx(p => (p + 1) % CLICK_MESSAGES.length);
+    setShowBubble(true);
+    await controls.start({
+      scale: [1, 1.22, 0.9, 1.08, 1],
+      rotate: [0, -8, 8, -3, 0],
+      transition: { duration: 0.5, ease: "easeInOut" },
+    });
+    bubbleTimer.current = setTimeout(() => setShowBubble(false), 2400);
+  }, [controls]);
+
+  if (failed) return <RukiMascotSvg state={state} />;
+
+  const isThinking = state === "thinking";
+
+  return (
+    <div className="relative flex flex-col items-center select-none">
+      {/* Click delight bubble */}
+      <AnimatePresence>
+        {showBubble && (
+          <motion.div
+            key="bubble"
+            initial={{ opacity: 0, scale: 0.65, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.65, y: 4 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className="absolute -top-10 left-1/2 z-50 -translate-x-1/2 whitespace-nowrap"
+          >
+            <div className="relative rounded-2xl bg-[#3C1B63] px-3.5 py-1.5 text-[11px] font-bold text-white shadow-xl shadow-purple-950/40">
+              {CLICK_MESSAGES[clickIdx]}
+              <div className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 h-2.5 w-2.5 rotate-45 bg-[#3C1B63]" />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <motion.div
+        animate={controls}
+        onClick={handleClick}
+        whileTap={{ scale: 0.93 }}
+        className="cursor-pointer drop-shadow-[0_12px_30px_rgba(124,58,173,0.5)]"
+      >
+        {/* Subtle ambient float (idle) / contemplative sway (thinking) */}
+        <motion.div
+          animate={isThinking ? { rotate: [-3, 3, -3], y: 0 } : { y: [0, -6, 0], rotate: 0 }}
+          transition={{ duration: isThinking ? 1 : 3, repeat: Infinity, ease: "easeInOut" }}
+        >
+          <DotLottieReact
+            src={MASCOT_SRC}
+            autoplay
+            loop
+            dotLottieRefCallback={setRef}
+            className="h-24 w-24 md:h-28 md:w-28"
+          />
+        </motion.div>
+      </motion.div>
+    </div>
+  );
+}
+
+function RukiMascotSvg({ state = "idle" }: RukiMascotProps) {
   const [blink, setBlink] = useState(false);
   const [clickIdx, setClickIdx] = useState(0);
   const [showBubble, setShowBubble] = useState(false);
