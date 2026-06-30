@@ -5,7 +5,7 @@ version: "3.9"
 #
 # Before deploying:
 #   1. Export GEMINI_API_KEY in the shell (or put it in deploy/.env).
-#   2. Replace YOUR_VM_PUBLIC_IP below with the VM's external IP (two places).
+#   2. Public API URL is set to the live VM IP (35.200.247.15) — update here if it changes.
 
 services:
   db:
@@ -47,11 +47,11 @@ services:
       context: ../frontend
       # NEXT_PUBLIC_* must be baked at build time, so pass it as a build arg too.
       args:
-        NEXT_PUBLIC_API_URL: http://YOUR_VM_PUBLIC_IP:8080
+        NEXT_PUBLIC_API_URL: http://35.200.247.15:8080
     container_name: ruki_frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: http://YOUR_VM_PUBLIC_IP:8080
+      NEXT_PUBLIC_API_URL: http://35.200.247.15:8080
     ports:
       - "3000:3000"
     depends_on:

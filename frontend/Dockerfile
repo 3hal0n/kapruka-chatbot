@@ -1,7 +1,7 @@
 # ── Ruki Next.js frontend (multi-stage) ───────────────────────────────────────
 
 # Stage 1 — Builder: install deps and produce the production build.
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Install dependencies first for better layer caching.
@@ -13,7 +13,7 @@ COPY . .
 
 # NEXT_PUBLIC_* values are inlined at build time, so set the API URL here.
 # Overridable from docker-compose via build args.
-ARG NEXT_PUBLIC_API_URL=http://YOUR_VM_PUBLIC_IP:8080
+ARG NEXT_PUBLIC_API_URL=http://35.200.247.15:8080
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
 RUN npm run build
