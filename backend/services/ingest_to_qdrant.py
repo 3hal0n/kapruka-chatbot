@@ -2,7 +2,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from sentence_transformers import SentenceTransformer
 from qdrant_client.models import PointStruct
 from dotenv import load_dotenv
 
@@ -11,7 +10,8 @@ load_dotenv()
 # Add project root to path so we can import qdrant_store
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from infrastructure.db.qdrant_store import ensure_collection, collection_info, get_client, COLLECTION_NAME
-from utils.config import CATALOG_PATH, INGEST_EMBEDDING_MODEL, INGEST_BATCH_SIZE
+from infrastructure.llm.client import embed_texts
+from utils.config import CATALOG_PATH, INGEST_EMBEDDING_MODEL, INGEST_BATCH_SIZE, QDRANT_EMBEDDING_DIM
 
 EMBEDDING_MODEL = INGEST_EMBEDDING_MODEL
 BATCH_SIZE = INGEST_BATCH_SIZE
@@ -34,18 +34,20 @@ def build_text(product: dict) -> str:
     """.strip()
 
 def embed_products(texts: list[str]) -> list[list[float]]:
-    encoder = SentenceTransformer(EMBEDDING_MODEL)
-    print(f"Embedding {len(texts)} products...")
-    
+    """Embed product texts via the hosted Gemini model (no local tensors)."""
+    print(f"Embedding {len(texts)} products with '{EMBEDDING_MODEL}'...")
+
     all_embeddings = []
     for i in range(0, len(texts), BATCH_SIZE):
         batch = texts[i : i + BATCH_SIZE]
         batch_num = i // BATCH_SIZE + 1
         total_batches = (len(texts) + BATCH_SIZE - 1) // BATCH_SIZE
-        embeddings = encoder.encode(batch).tolist()
+        embeddings = embed_texts(
+            batch, model=EMBEDDING_MODEL, output_dim=QDRANT_EMBEDDING_DIM
+        )
         all_embeddings.extend(embeddings)
         print(f"Embedded batch {batch_num}/{total_batches}")
-    
+
     return all_embeddings
 
 def build_points(products: list, embeddings: list) -> list[PointStruct]:

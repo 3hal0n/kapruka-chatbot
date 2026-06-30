@@ -1,7 +1,6 @@
 google-genai
 playwright
 qdrant-client
-sentence-transformers
 numpy
 pyyaml
 python-dotenv

@@ -16,15 +16,15 @@ short_term_memory:
   max_turns: 10
 
 lt_memory:
-  embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+  embedding_model: "gemini-embedding-001"
   search_top_k: 10
 
 qdrant:
   collection_name: "kapruka_catalog"
-  embedding_dim: 384
+  embedding_dim: 768   # gemini-embedding-001 truncated to 768 dims
   timeout: 30
 
 ingest:
   catalog_path: "data/catalog.json"
-  embedding_model: "all-MiniLM-L6-v2"
+  embedding_model: "gemini-embedding-001"
   batch_size: 100

@@ -10,7 +10,7 @@ WORKDIR /app
 
 # Install dependencies first so this layer is cached across source changes.
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --default-timeout=100 -r requirements.txt
 
 # Copy the remaining backend source (see .dockerignore for excluded cache files).
 COPY . .

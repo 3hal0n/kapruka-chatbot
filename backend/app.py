@@ -13,9 +13,9 @@ from memory.semantic_memory import SemanticMemory
 @st.cache_resource
 def _warmup():
     from infrastructure.db.qdrant_store import get_client
-    from memory.lt_memory import encoder
+    from infrastructure.llm.client import embed_text
     get_client()
-    encoder.encode("warmup", show_progress_bar=False)
+    embed_text("warmup")
 
 _warmup()
 
