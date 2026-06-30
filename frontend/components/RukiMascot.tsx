@@ -11,7 +11,8 @@ interface RukiMascotProps {
 }
 
 // Self-hosted Lottie character (swap this single path to change the mascot).
-const MASCOT_SRC = "/lottie/ruki-bot.json";
+// Ghost emoji (Google Noto animated emoji 👻) — the chosen sentient character.
+const MASCOT_SRC = "/lottie/ruki-ghost.json";
 
 // Playback speed per conversational state — gives one coherent character
 // distinct energy levels instead of swapping between mismatched clips.

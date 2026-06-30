@@ -77,12 +77,16 @@ export function LeftSidebar({
   activeProfileId,
 }: LeftSidebarProps) {
   const content = (
-    <div className="flex h-full w-65 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-background p-4 select-none">
-      <div className="flex items-center justify-end md:hidden">
+    <div className="flex h-full w-[300px] max-w-[86vw] shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-background/95 backdrop-blur-xl p-4 select-none">
+      <div className="flex items-center justify-between">
+        <h2 className="flex items-center gap-2 text-base font-extrabold tracking-tight text-foreground">
+          <Compass className="h-4 w-4 text-amber" /> Workspace
+        </h2>
         <button
-          id="sidebar-close-btn-mobile"
+          id="sidebar-close-btn"
           onClick={onClose}
-          className="grid h-9 w-9 place-items-center rounded-xl transition-all duration-300 hover:bg-muted"
+          className="grid h-9 w-9 place-items-center rounded-xl transition-all duration-300 hover:bg-muted cursor-pointer"
+          aria-label="Close menu"
         >
           <X className="h-5 w-5" />
         </button>
@@ -238,29 +242,26 @@ export function LeftSidebar({
   );
 
   return (
-    <>
-      <aside className="hidden md:flex h-full">{content}</aside>
-      <AnimatePresence>
-        {open && (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-50"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
           <motion.div
-            className="fixed inset-0 z-50 md:hidden"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            initial={{ x: "-100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "-100%" }}
+            transition={{ type: "spring", stiffness: 320, damping: 34 }}
+            className="absolute inset-y-0 left-0 shadow-2xl shadow-black/40"
           >
-            <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-            <motion.div
-              initial={{ x: -280 }}
-              animate={{ x: 0 }}
-              exit={{ x: -280 }}
-              transition={{ type: "tween", duration: 0.25 }}
-              className="absolute inset-y-0 left-0"
-            >
-              {content}
-            </motion.div>
+            {content}
           </motion.div>
-        )}
-      </AnimatePresence>
-    </>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

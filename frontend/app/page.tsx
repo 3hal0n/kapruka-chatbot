@@ -132,7 +132,8 @@ export default function RukiPage() {
   const [messageInput, setMessageInput] = useState("");
   const [isMicActive, setIsMicActive] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
-  const [isAudioActive, setIsAudioActive] = useState(true);
+  // TTS output stays OFF until the user explicitly enables the audio toggle.
+  const [isAudioActive, setIsAudioActive] = useState(false);
 
   // ── Theme — Premium Ultra Dark is the default system state; Light is opt-in.
   // We toggle a `light` class (dark = the class-less :root default) so first
@@ -516,7 +517,7 @@ export default function RukiPage() {
       {/* Main Top Header (Purple/Blue like Kapruka, always visible, replaces text branding with logo) */}
       <header className="flex h-16 w-full items-center justify-between border-b border-white/10 bg-[#3c1b63] text-white px-4 md:px-6 shrink-0 z-40 select-none">
         <div className="flex items-center gap-3">
-          <button id="sidebar-toggle-btn-mobile" onClick={() => setLeftOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer md:hidden" aria-label="Open menu">
+          <button id="sidebar-toggle-btn" onClick={() => setLeftOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer" aria-label="Open menu">
             <Menu className="h-5 w-5" />
           </button>
           <img src="/ruki.svg" alt="Kapruka Logo" className="h-10 w-auto object-contain select-none" />
@@ -547,8 +548,8 @@ export default function RukiPage() {
 
         {/* Center workspace */}
         <main className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex flex-1 flex-col overflow-hidden p-3 md:p-6">
-            <div className="relative flex flex-col h-full overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl shadow-purple-950/50">
+          <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col overflow-hidden p-2 sm:p-3 md:p-6">
+            <div className="glass glow-primary relative flex h-full flex-col overflow-hidden rounded-3xl shadow-2xl shadow-purple-950/50">
 
               {/* ── Gift Box Canvas (visible only in Gift Box Builder mode) ── */}
               <AnimatePresence>
@@ -750,8 +751,6 @@ export default function RukiPage() {
 
         <RightCart cart={cart} subtotal={subtotal} delivery={delivery} total={total} updateQuantity={updateQuantity} handleCreateOrderLink={handleCreateOrderLink} open={rightOpen} onClose={() => setRightOpen(false)} onGroupGift={handleGroupGift} />
       </div>
-
-      {(leftOpen || rightOpen) && <div onClick={() => { setLeftOpen(false); setRightOpen(false); }} className="fixed inset-0 z-30 bg-black/40 backdrop-blur-xs md:hidden" />}
 
       {/* Memory recall toast */}
       <AnimatePresence>
