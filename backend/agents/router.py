@@ -390,14 +390,55 @@ class Router:
 
         return classification
 
-    async def route_stream(self, user_message: str, recipient_context: dict | None = None, budget_limit: float | None = None, vibe_check: str | None = None):
+    def _classification_from_profile(self, profile: dict, user_message: str) -> dict:
+        """Build a SEARCH classification directly from a saved GiftProfile row.
+
+        Used to SHORT-CIRCUIT the LLM intent classifier: the profile's recipient,
+        occasion and allergens are authoritative, so we load them straight into
+        the operational classification frame instead of guessing from text.
+        """
+        recipient = (profile.get("recipient_name") or "recipient").strip()
+        allergies = [str(a).strip() for a in (profile.get("allergies") or []) if str(a).strip()]
+
+        # If the user named a concrete product, honour it; otherwise default to a
+        # generic gift search (occasion fallbacks pick suitable items).
+        sq = self._guard_search_query({"search_query": user_message}, user_message).get("search_query")
+        if not sq or len(sq.split()) > 2:
+            sq = "gift"
+
+        return {
+            "intents": ["SEARCH"],
+            "allergies": {recipient.lower(): allergies} if allergies else {},
+            "preferences": {},
+            "search_recipient": recipient,
+            "location": None,
+            "deadline": profile.get("occasion"),
+            "search_query": sq,
+            "budget_limit": None,
+            "tracking_code": None,
+            "cart_items": None,
+            "trigger_checkout": False,
+            "recipient_name": None,
+            "delivery_address": None,
+            "contact_number": None,
+            "gift_message": None,
+        }
+
+    async def route_stream(self, user_message: str, recipient_context: dict | None = None, budget_limit: float | None = None, vibe_check: str | None = None, gift_profile: dict | None = None):
         """Streaming version of route() — yields chunks for SEARCH responses."""
         import asyncio
 
-        # Classify intents using asyncio task
+        # ── PROFILE SHORT-CIRCUIT ─────────────────────────────────────────────
+        # When the turn references a saved Occasion Vibe Calendar profile, bypass
+        # the conversational intent classifier entirely and load the profile's
+        # parameters directly. Otherwise classify as usual.
         start = time.time()
-        print('classifying tasks starting...')
-        classification = await asyncio.to_thread(self.classify_intents, user_message)
+        if gift_profile:
+            print(f"[Router] Short-circuit from gift profile '{gift_profile.get('recipient_name')}'.")
+            classification = self._classification_from_profile(gift_profile, user_message)
+        else:
+            print('classifying tasks starting...')
+            classification = await asyncio.to_thread(self.classify_intents, user_message)
         query_vector = []
         end = time.time()
 
@@ -617,6 +658,20 @@ class Router:
                  if isinstance(v, dict) and v.get("occasion")),
                 None
             )
+            # Authoritative allergen set for the definitive hard-stop purge in the
+            # catalog agent: the saved DB profile's allergens PLUS every allergen
+            # resolved for this turn (current + history-enriched). Union so the
+            # final gate is absolute, not scoped to a single recipient.
+            _allergen_union = set()
+            if gift_profile:
+                _allergen_union.update(
+                    str(a).lower().strip() for a in (gift_profile.get("allergies") or []) if str(a).strip()
+                )
+            for _lst in (classification.get("allergies") or {}).values():
+                _allergen_union.update(
+                    str(a).lower().strip() for a in (_lst or []) if str(a).strip()
+                )
+            _profile_allergies = sorted(_allergen_union) or None
             async for chunk in catalog_agent.run_stream(
                 recipients=all_recipients,
                 search_query=classification.get("search_query") or user_message,
@@ -627,6 +682,7 @@ class Router:
                 occasion=_occasion,
                 user_raw_message=user_message,
                 vibe_check=vibe_check,
+                profile_allergies=_profile_allergies,
             ):
                 if chunk != "<<CLEAR>>":
                     full_response_chunks.append(chunk)

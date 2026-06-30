@@ -66,12 +66,21 @@ def get_router(user_id: str) -> Router:
 async def lifespan(app: FastAPI):
     # Warmup MCP client
     logger.info("Starting lifespan warmup...")
+
+    # Initialise the relational DB layer (gift profiles). Best-effort: a DB
+    # failure must NOT prevent the chat/SSE service from starting.
+    try:
+        from infrastructure.db.database import init_db
+        await init_db()
+    except Exception as e:
+        logger.warning(f"DB init skipped ({e}). Profile persistence disabled.")
+
     try:
         from infrastructure.mcp.client import kapruka_mcp
-        
+
         # Initialize Kapruka MCP Client
         await kapruka_mcp.start()
-        
+
         logger.info("Warmup complete and MCP client initialized. Ready to serve requests.")
     except Exception as e:
         logger.exception(f"Warmup failed: {e}")
@@ -83,6 +92,12 @@ async def lifespan(app: FastAPI):
         logger.info("MCP client connection stopped.")
     except Exception as e:
         logger.exception(f"Error during MCP client shutdown: {e}")
+    # Dispose DB engine/pool
+    try:
+        from infrastructure.db.database import dispose_db
+        await dispose_db()
+    except Exception as e:
+        logger.warning(f"Error disposing DB: {e}")
     logger.info("Shutting down lifespan...")
 
 
@@ -111,6 +126,36 @@ class ChatRequest(BaseModel):
     recipient: Optional[str] = None
     occasion: Optional[str] = None
     vibe_check: Optional[str] = None
+    # When the user acts on a saved Occasion Vibe Calendar profile, the frontend
+    # passes its DB id so the backend can short-circuit intent classification and
+    # load the profile's allergen guardrails directly.
+    profile_id: Optional[str] = None
+
+
+# ── Gift Profile (Occasion Vibe Calendar) schemas ─────────────────────────────
+
+from datetime import date as _date, datetime as _datetime
+
+
+class GiftProfileCreate(BaseModel):
+    user_id: str
+    recipient_name: str
+    occasion: str
+    target_date: _date
+    vibe_summary: Optional[str] = None
+    allergies: list[str] = []
+
+
+class GiftProfileOut(BaseModel):
+    id: str
+    user_id: str
+    recipient_name: str
+    occasion: str
+    target_date: _date
+    vibe_summary: Optional[str] = None
+    allergies: list[str] = []
+    created_at: Optional[_datetime] = None
+    days_until: int
 
 
 class GroupGiftItem(BaseModel):
@@ -172,10 +217,37 @@ async def chat_endpoint(request: ChatRequest):
     if budget_limit is not None:
         logger.info(f"Detected budget limit: Rs. {budget_limit}")
 
+    # ── Load a saved gift profile if one is referenced ────────────────────────
+    # Explicit (profile_id) takes priority; otherwise try an implicit match on a
+    # recipient name in the message. Wrapped so a DB outage never blocks chat.
+    gift_profile = None
+    try:
+        from infrastructure.db.database import DB_AVAILABLE
+        if DB_AVAILABLE:
+            from infrastructure.db.profiles_repo import (
+                get_profile_by_id,
+                find_profile_by_recipient,
+            )
+            if request.profile_id:
+                gift_profile = await get_profile_by_id(request.profile_id)
+            if gift_profile is None:
+                gift_profile = await find_profile_by_recipient(
+                    request.user_id.strip() or "guest", request.message
+                )
+            if gift_profile is not None:
+                gift_profile = gift_profile.to_dict()
+                logger.info(
+                    f"Short-circuit: loaded gift profile for "
+                    f"'{gift_profile.get('recipient_name')}' "
+                    f"(allergies={gift_profile.get('allergies')})"
+                )
+    except Exception as e:
+        logger.warning(f"Gift-profile lookup skipped: {e}")
+
     async def sse_generator():
         start_time = time.time()
         try:
-            async for chunk in router.route_stream(request.message, request.recipient_context, budget_limit=budget_limit, vibe_check=request.vibe_check):
+            async for chunk in router.route_stream(request.message, request.recipient_context, budget_limit=budget_limit, vibe_check=request.vibe_check, gift_profile=gift_profile):
                 # 1. Classification event
                 if isinstance(chunk, str) and chunk.startswith("<<CLASSIFICATION>>:"):
                     try:
@@ -288,6 +360,72 @@ async def reset_endpoint(request: ResetRequest):
             return {"status": "error", "message": "Short-term memory sub-system not available."}
     else:
         return {"status": "success", "message": f"No active session found for user '{clean_id}' to reset."}
+
+
+@app.post("/api/profiles", response_model=GiftProfileOut, status_code=status.HTTP_201_CREATED)
+async def create_profile_endpoint(payload: GiftProfileCreate):
+    """Persist a new gift profile (Occasion Vibe Calendar timeline event)."""
+    from infrastructure.db.database import DB_AVAILABLE
+    from infrastructure.db.profiles_repo import create_profile, days_until
+
+    if not DB_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Profile storage is temporarily unavailable.",
+        )
+
+    if not payload.recipient_name.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="recipient_name is required.",
+        )
+
+    try:
+        profile = await create_profile(
+            user_id=payload.user_id.strip() or "guest",
+            recipient_name=payload.recipient_name.strip(),
+            occasion=payload.occasion.strip(),
+            target_date=payload.target_date,
+            vibe_summary=payload.vibe_summary,
+            allergies=payload.allergies,
+        )
+    except Exception as e:
+        logger.exception(f"create_profile failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not save profile.",
+        )
+
+    if profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not save profile.",
+        )
+
+    data = profile.to_dict()
+    return GiftProfileOut(**data, days_until=days_until(profile.target_date))
+
+
+@app.get("/api/profiles/{user_id}", response_model=list[GiftProfileOut])
+async def list_profiles_endpoint(user_id: str):
+    """All saved timeline configurations for a session, soonest occasion first."""
+    from infrastructure.db.database import DB_AVAILABLE
+    from infrastructure.db.profiles_repo import get_profiles_for_user, days_until
+
+    if not DB_AVAILABLE:
+        # Degrade gracefully: empty timeline rather than a hard failure.
+        return []
+
+    try:
+        profiles = await get_profiles_for_user(user_id.strip() or "guest")
+    except Exception as e:
+        logger.exception(f"list_profiles failed: {e}")
+        return []
+
+    return [
+        GiftProfileOut(**p.to_dict(), days_until=days_until(p.target_date))
+        for p in profiles
+    ]
 
 
 @app.get("/api/delivery")
