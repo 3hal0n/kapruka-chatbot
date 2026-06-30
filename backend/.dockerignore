@@ -1,0 +1,26 @@
+# Python caches & build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local virtual environments
+venv/
+.venv/
+env/
+
+# Secrets & local dev database (provided via env at runtime instead)
+.env
+.env.*
+*.db
+gift_profiles.db
+
+# VCS / editor / OS noise
+.git/
+.gitignore
+*.log
+.DS_Store
+.idea/
+.vscode/

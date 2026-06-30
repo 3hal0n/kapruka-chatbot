@@ -1,0 +1,61 @@
+version: "3.9"
+
+# Single-VM stack for Ruki: PostgreSQL + FastAPI backend + Next.js frontend.
+# Build contexts are relative to this file (deploy/), hence ../backend, ../frontend.
+#
+# Before deploying:
+#   1. Export GEMINI_API_KEY in the shell (or put it in deploy/.env).
+#   2. Replace YOUR_VM_PUBLIC_IP below with the VM's external IP (two places).
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: ruki_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ruki_admin
+      POSTGRES_PASSWORD: secure_db_password_2026
+      POSTGRES_DB: ruki_memory
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    # Gate dependents on real readiness so the backend never races a cold DB.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ruki_admin -d ruki_memory"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ../backend
+    container_name: ruki_backend
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      DATABASE_URL: postgresql://ruki_admin:secure_db_password_2026@db:5432/ruki_memory
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ../frontend
+      # NEXT_PUBLIC_* must be baked at build time, so pass it as a build arg too.
+      args:
+        NEXT_PUBLIC_API_URL: http://YOUR_VM_PUBLIC_IP:8080
+    container_name: ruki_frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://YOUR_VM_PUBLIC_IP:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:

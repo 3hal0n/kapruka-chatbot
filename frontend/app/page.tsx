@@ -15,7 +15,10 @@ import { ChatInputCapsule } from "@/components/ChatInputCapsule";
 import { RukiMascot, MascotState } from "@/components/RukiMascot";
 import { GiftProfile, daysUntil, formatOccasionDate } from "@/data/giftProfiles";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+const BACKEND_URL =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  "http://localhost:8000";
 const generateUserId = () => `ruki_${Math.random().toString(36).substring(2, 10)}`;
 
 interface Message {

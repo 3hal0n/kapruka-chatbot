@@ -30,9 +30,30 @@ logger = logging.getLogger("kapruka-db")
 # ── Connection URL ────────────────────────────────────────────────────────────
 # Prod: postgresql+asyncpg://user:pass@host:5432/dbname
 # Dev fallback: a local SQLite file via aiosqlite (no server required).
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "sqlite+aiosqlite:///./gift_profiles.db",
+
+
+def _normalize_async_url(url: str) -> str:
+    """Coerce a connection URL to an async driver create_async_engine accepts.
+
+    Deployment (docker-compose) injects a plain ``postgresql://`` DSN, but the
+    SQLAlchemy asyncio engine REQUIRES an async driver. Rewrite sync schemes to
+    their async equivalents so the same env var works in prod and dev without
+    the operator having to know about driver suffixes.
+    """
+    url = (url or "").strip()
+    if url.startswith(("postgresql+asyncpg://", "sqlite+aiosqlite://")):
+        return url
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://"):]
+    if url.startswith("postgres://"):  # some providers emit this short form
+        return "postgresql+asyncpg://" + url[len("postgres://"):]
+    if url.startswith("sqlite://") and "aiosqlite" not in url:
+        return "sqlite+aiosqlite://" + url[len("sqlite://"):]
+    return url
+
+
+DATABASE_URL = _normalize_async_url(
+    os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./gift_profiles.db")
 )
 
 _IS_POSTGRES = DATABASE_URL.startswith("postgresql")
