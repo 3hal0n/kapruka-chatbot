@@ -13,6 +13,7 @@ import { ShoppingContextCard } from "@/components/ShoppingContextCard";
 import { ProductCard, Product, kaprukaBuyUrl } from "@/components/ProductCard";
 import { ChatInputCapsule } from "@/components/ChatInputCapsule";
 import { RukiMascot, MascotState } from "@/components/RukiMascot";
+import { GiftProfile, daysUntil, formatOccasionDate } from "@/data/giftProfiles";
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 const generateUserId = () => `ruki_${Math.random().toString(36).substring(2, 10)}`;
@@ -103,6 +104,9 @@ export default function RukiPage() {
   const [budget, setBudget] = useState("");
   const [recipient, setRecipient] = useState("");
   const [occasion, setOccasion] = useState("");
+
+  // ── Occasion Vibe Calendar — currently selected gift profile
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
 
   // ── Vibe Check (AI personality analyzer)
   const [vibeCheck, setVibeCheck] = useState("");
@@ -322,6 +326,40 @@ export default function RukiPage() {
   };
 
   // ── Send message via SSE
+  // ── Occasion Vibe Calendar: clicking a saved gift profile patches the global
+  // filter state and fires a proactive Ruki greeting (a background chat payload
+  // event) so the conversation kicks off with full context.
+  const handleSelectGiftProfile = (profile: GiftProfile) => {
+    // 1. Patch global filters
+    setActiveProfileId(profile.id);
+    setRecipient(profile.name);
+    setOccasion(profile.occasion);
+    setBudget(profile.budget);
+    setVibeCheck(profile.vibeSummary);
+    setLeftOpen(false); // close the mobile drawer if open
+
+    // 2. Build Ruki's proactive greeting
+    const days = daysUntil(profile.month, profile.day);
+    const whenText = days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`;
+    const allergenClause = profile.allergen
+      ? ` Last time we checked, they avoid ${profile.allergen}.`
+      : "";
+    const greeting =
+      `Machan, I see ${profile.name}'s ${profile.occasion} is coming up ${whenText} ` +
+      `(${formatOccasionDate(profile.month, profile.day)})!${allergenClause} ` +
+      `Let's pick a great gift around ${profile.budget} — shall I pull up some ` +
+      `${profile.occasion.toLowerCase()} ideas for ${profile.name}?`;
+
+    setMessages(prev => [
+      ...prev,
+      { id: `vibe-${profile.id}-${Date.now()}`, sender: "ai", text: greeting, intents: ["SEARCH"] },
+    ]);
+
+    // 3. Bring the mascot to life
+    setMascotHappy(true);
+    setTimeout(() => setMascotHappy(false), 2200);
+  };
+
   const handleSendMessage = async () => {
     if (!messageInput.trim()) return;
     const userText = messageInput;
@@ -448,7 +486,7 @@ export default function RukiPage() {
 
       {/* Main content layout below header */}
       <div className="flex flex-1 overflow-hidden">
-        <LeftSidebar mode={mode} setMode={setMode} budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} open={leftOpen} onClose={() => setLeftOpen(false)} theme={theme} toggleTheme={toggleTheme} vibeCheck={vibeCheck} setVibeCheck={setVibeCheck} />
+        <LeftSidebar mode={mode} setMode={setMode} budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} open={leftOpen} onClose={() => setLeftOpen(false)} theme={theme} toggleTheme={toggleTheme} vibeCheck={vibeCheck} setVibeCheck={setVibeCheck} onSelectProfile={handleSelectGiftProfile} activeProfileId={activeProfileId} />
 
         {/* Center workspace */}
         <main className="flex flex-1 flex-col overflow-hidden">
