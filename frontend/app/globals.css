@@ -12,53 +12,23 @@
 */
 
 :root {
-  /* ── Premium Ultra Dark Mode — the default canvas (60%) ── */
-  --background: #0A0512;
-  --foreground: #F4F1F8;
-  --surface: #160A24;
-  --surface-glass: rgba(30, 14, 54, 0.55);
-  --border: rgba(255, 255, 255, 0.08);
-
-  /* ── Brand structure (30%) — Kapruka Purple ── */
-  --primary: #3C1B63;
-  --primary-foreground: #ffffff;
-  --primary-soft: #21113A;
-  --primary-glow: rgba(124, 58, 173, 0.55);
-
-  /* ── Conversion accent (10%) — Kapruka Gold ── */
-  --amber: #FFD700;
-  --amber-foreground: #0B0410;
-
-  --muted: rgba(255, 255, 255, 0.05);
-  --muted-foreground: #C8B3E4;
-
-  --ring: #FFD700;
-
-  /* Ambient cosmic glow painted behind everything */
-  --ambient:
-    radial-gradient(58% 48% at 18% -4%, rgba(124, 58, 173, 0.22), transparent 70%),
-    radial-gradient(50% 42% at 102% 104%, rgba(60, 27, 99, 0.30), transparent 72%),
-    radial-gradient(40% 38% at 92% 6%, rgba(255, 215, 0, 0.05), transparent 70%);
-
-  --scroll-thumb: rgba(255, 255, 255, 0.15);
-  --scroll-thumb-hover: rgba(255, 255, 255, 0.3);
-}
-
-html.light {
-  /* ── Pristine Light Mode — opt-in override ── */
-  --background: #F8F7FA;
-  --foreground: #1F2937;
+  /* ── Pristine Light Mode (Default) ── */
+  --background: #ffffff; /* Pristine High-Contrast White */
+  --foreground: #111827;
   --surface: #ffffff;
-  --surface-glass: rgba(255, 255, 255, 0.72);
-  --border: #E8E4F0;
+  --surface-glass: rgba(255, 255, 255, 0.75);
+  /* Translucent glass border stroke using Kapruka Purple #3C1B63 */
+  --border: rgba(60, 27, 99, 0.12);
 
+  /* Brand structure — Kapruka Purple */
   --primary: #3C1B63;
   --primary-foreground: #ffffff;
   --primary-soft: #F3F0F8;
-  --primary-glow: rgba(124, 58, 173, 0.28);
+  --primary-glow: rgba(60, 27, 99, 0.08);
 
+  /* Conversion accent — Kapruka Yellow */
   --amber: #FFD700;
-  --amber-foreground: #0B0410;
+  --amber-foreground: #3C1B63;
 
   --muted: #F3F4F6;
   --muted-foreground: #6B7280;
@@ -66,11 +36,41 @@ html.light {
   --ring: #3C1B63;
 
   --ambient:
-    radial-gradient(58% 48% at 18% -4%, rgba(124, 58, 173, 0.07), transparent 70%),
-    radial-gradient(50% 42% at 102% 104%, rgba(60, 27, 99, 0.06), transparent 72%);
+    radial-gradient(58% 48% at 18% -4%, rgba(60, 27, 99, 0.04), transparent 70%),
+    radial-gradient(50% 42% at 102% 104%, rgba(60, 27, 99, 0.03), transparent 72%);
 
   --scroll-thumb: rgba(0, 0, 0, 0.15);
   --scroll-thumb-hover: rgba(0, 0, 0, 0.3);
+}
+
+.dark {
+  /* ── Solid Deep Matte Carbon Black (#0A0A0B) Dark Mode ── */
+  --background: #0A0A0B;
+  --foreground: #F4F1F8;
+  --surface: #121214;
+  --surface-glass: rgba(18, 18, 20, 0.8);
+  --border: rgba(255, 255, 255, 0.08);
+
+  --primary: #7C3AED;
+  --primary-foreground: #ffffff;
+  --primary-soft: #1E1B4B;
+  --primary-glow: rgba(124, 58, 173, 0.35); /* Ambient purple glow */
+
+  --amber: #FFD700;
+  --amber-foreground: #0A0A0B;
+
+  --muted: rgba(255, 255, 255, 0.05);
+  --muted-foreground: #C8B3E4;
+
+  --ring: #FFD700;
+
+  --ambient:
+    radial-gradient(60% 50% at 50% -10%, rgba(124, 58, 173, 0.25), transparent 70%),
+    radial-gradient(50% 42% at 102% 104%, rgba(60, 27, 99, 0.3), transparent 72%),
+    radial-gradient(40% 38% at 92% 6%, rgba(255, 215, 0, 0.05), transparent 70%);
+
+  --scroll-thumb: rgba(255, 255, 255, 0.15);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.3);
 }
 
 @theme inline {
@@ -170,3 +170,11 @@ body {
   .text-aurora { animation: none; }
   * { scroll-behavior: auto !important; }
 }
+
+.lab-bg::before {
+  overflow: hidden;
+  max-width: 100vw;
+  max-height: 100vh;
+  box-sizing: border-box;
+}
+
