@@ -25,6 +25,10 @@
   --primary-foreground: #ffffff;
   --primary-soft: #F3F0F8;
   --primary-glow: rgba(60, 27, 99, 0.08);
+  /* Lighter, friendlier violet for large filled surfaces (CTAs, cart panel) —
+     keeps the deep #3C1B63 for text/borders while softening big purple blocks. */
+  --primary-vivid: #6D28D9;
+  --primary-vivid-soft: #7C4DDB;
 
   /* Conversion accent — Kapruka Yellow */
   --amber: #FFD700;
@@ -55,6 +59,8 @@
   --primary-foreground: #ffffff;
   --primary-soft: #1E1B4B;
   --primary-glow: rgba(124, 58, 173, 0.35); /* Ambient purple glow */
+  --primary-vivid: #7C3AED;
+  --primary-vivid-soft: #9061F0;
 
   --amber: #FFD700;
   --amber-foreground: #0A0A0B;
@@ -86,6 +92,8 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-primary-soft: var(--primary-soft);
   --color-primary-glow: var(--primary-glow);
+  --color-primary-vivid: var(--primary-vivid);
+  --color-primary-vivid-soft: var(--primary-vivid-soft);
 
   --color-amber: var(--amber);
   --color-amber-foreground: var(--amber-foreground);

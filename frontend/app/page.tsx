@@ -284,9 +284,11 @@ export default function RukiPage() {
   // ── Send message via SSE stream
   const handleSendMessage = async (userText: string) => {
     if (!userText.trim()) return;
-    setIsTyping(true); 
-    setCurrentStatus("Analyzing context...");
-    
+    setIsTyping(true);
+    // Leave status null so the playful rotating "Ruki is thinking…" indicator
+    // shows; backend status events override it with specific progress text.
+    setCurrentStatus(null);
+
     const userMsg: Message = { id: `user-${Date.now()}`, sender: "user", text: userText };
     const updatedMessages = [...messages, userMsg];
     setMessages(updatedMessages);
@@ -309,19 +311,32 @@ export default function RukiPage() {
     const ctx: Record<string, any> = {};
     ctx[recipient.toLowerCase() || "default"] = { budget: budget || undefined, occasion: occasion || undefined, location: "Colombo" };
 
+    // Abort the request if the backend stalls (e.g. LLM upstream hangs) so the
+    // user never sits on an endless "thinking" indicator — surface a friendly
+    // error instead. Reset the timer each time a chunk arrives so long but
+    // healthy streams aren't cut off.
+    const controller = new AbortController();
+    const STALL_MS = 45000;
+    let stallTimer = setTimeout(() => controller.abort(), STALL_MS);
+    const bumpStall = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => controller.abort(), STALL_MS);
+    };
+
     try {
-      const resp = await fetch(`${BACKEND_URL}/api/chat`, { 
-        method: "POST", 
-        headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify({ 
-          user_id: userIdRef.current, 
-          message: userText, 
-          recipient_context: ctx, 
-          budget: budget || undefined, 
-          recipient: recipient || undefined, 
-          occasion: occasion || undefined, 
-          vibe_check: vibeCheck.trim() || undefined 
-        }) 
+      const resp = await fetch(`${BACKEND_URL}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          user_id: userIdRef.current,
+          message: userText,
+          recipient_context: ctx,
+          budget: budget || undefined,
+          recipient: recipient || undefined,
+          occasion: occasion || undefined,
+          vibe_check: vibeCheck.trim() || undefined
+        })
       });
       if (!resp.ok || !resp.body) throw new Error("SSE error");
 
@@ -331,8 +346,9 @@ export default function RukiPage() {
       let isCartActionTurn = false;
 
       while (true) {
-        const { value, done } = await reader.read(); 
+        const { value, done } = await reader.read();
         if (done) break;
+        bumpStall();
         buf += dec.decode(value, { stream: true });
         const parts = buf.split("\n\n"); 
         buf = parts.pop() || "";
@@ -388,15 +404,22 @@ export default function RukiPage() {
       setMessages(finalizedMessages);
       localStorage.setItem(`ruki_chat_messages_${userIdRef.current}`, JSON.stringify(finalizedMessages));
       speakResponse(aiText);
-    } catch {
+    } catch (err) {
+      const stalled = err instanceof DOMException && err.name === "AbortError";
       const isLogistics = /deliver|colombo|kandy/i.test(userText);
-      const text = isLogistics ? "Aney, yes! Kapruka delivers next-day. Standard shipping is LKR 350 to Colombo, Kandy, and surrounding districts." : "The backend is currently offline. Please ensure the FastAPI server is running and try again.";
-      
-      const offlineMsg: Message = { id: `sim-${Date.now()}`, sender: "ai", text, intents: isLogistics ? ["LOGISTICS"] : ["SEARCH"], latency: 0, isError: true };
+      const text = stalled
+        ? "Aiyo, Ruki is taking too long to respond right now 😅 — the AI service may be busy or unavailable. Please try again in a moment."
+        : isLogistics
+        ? "Aney, yes! Kapruka delivers next-day. Standard shipping is LKR 350 to Colombo, Kandy, and surrounding districts."
+        : "The backend is currently offline. Please ensure the FastAPI server is running and try again.";
+
+      const offlineMsg: Message = { id: `sim-${Date.now()}`, sender: "ai", text, intents: isLogistics && !stalled ? ["LOGISTICS"] : ["SEARCH"], latency: 0, isError: true };
       const finalizedMessages = [...updatedMessages, offlineMsg];
       setMessages(finalizedMessages);
       localStorage.setItem(`ruki_chat_messages_${userIdRef.current}`, JSON.stringify(finalizedMessages));
       speakResponse(text);
+    } finally {
+      clearTimeout(stallTimer);
     }
     setStreamedText(""); setCurrentStatus(null); setCurrentIntents([]); setIsTyping(false);
   };
@@ -446,12 +469,14 @@ export default function RukiPage() {
     });
   }
 
-  // If typing but not streaming text, show dynamic typing message
+  // If typing but not streaming text, show the animated "thinking" indicator.
+  // Pass through a specific backend status if present; otherwise leave content
+  // empty so the indicator cycles its playful phrases.
   if (isTyping && !streamedText) {
     chatMessages.push({
       id: "typing-indicator-msg",
       role: "assistant",
-      content: currentStatus || "Thinking...",
+      content: currentStatus || "",
       timestamp: new Date(),
       intents: ["THINKING"]
     });

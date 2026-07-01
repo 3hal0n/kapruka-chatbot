@@ -136,7 +136,7 @@ export function RightCart({
         )}
       </div>
 
-      <div className="rounded-2xl bg-primary p-4 text-primary-foreground shadow-md">
+      <div className="rounded-2xl bg-linear-to-br from-primary-vivid to-primary-vivid-soft p-4 text-primary-foreground shadow-md">
         <div className="flex items-center justify-between py-1 text-sm select-none">
           <span className="font-medium opacity-90">Subtotal</span>
           <span className="font-bold">Rs. {subtotal.toLocaleString()}</span>

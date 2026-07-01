@@ -93,6 +93,61 @@ function EmptyStateIllustration({ theme }: { theme: "light" | "dark" }) {
   );
 }
 
+// Playful, rotating "thinking" verbs — cycles like a coding assistant while the
+// backend works, replacing the old robotic "Analyzing context..." status text.
+const THINKING_PHRASES = [
+  "thinking",
+  "cooking",
+  "concocting",
+  "brewing ideas",
+  "hunting for gifts",
+  "wrapping thoughts",
+  "consulting the catalog",
+  "sprinkling magic",
+  "pondering",
+  "curating picks",
+];
+
+function ThinkingIndicator({ status }: { status?: string | null }) {
+  const [idx, setIdx] = React.useState(0);
+
+  React.useEffect(() => {
+    const t = setInterval(() => setIdx((p) => (p + 1) % THINKING_PHRASES.length), 1900);
+    return () => clearInterval(t);
+  }, []);
+
+  // A specific backend status (e.g. delivery / profile refinement) takes over;
+  // otherwise Ruki playfully cycles through the phrase list.
+  const label = status && status.trim() ? status : `Ruki is ${THINKING_PHRASES[idx]}`;
+
+  return (
+    <div className="flex items-center gap-2.5 rounded-2xl border border-border/40 bg-primary-soft/60 px-4 py-3 text-sm text-foreground">
+      <span className="flex items-center gap-1" aria-hidden="true">
+        {[0, 150, 300].map((delay) => (
+          <span
+            key={delay}
+            className="h-1.5 w-1.5 rounded-full bg-primary-vivid animate-bounce"
+            style={{ animationDelay: `${delay}ms` }}
+          />
+        ))}
+      </span>
+      <AnimatePresence mode="wait">
+        <motion.span
+          key={label}
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -6 }}
+          transition={{ duration: 0.25 }}
+          className="font-semibold text-muted-foreground"
+        >
+          {label}
+          <span className="ml-0.5 opacity-60">…</span>
+        </motion.span>
+      </AnimatePresence>
+    </div>
+  );
+}
+
 const isNoMatchesOrError = (msg: Message): boolean => {
   if (msg.role !== "assistant") return false;
   if (msg.isError) return true;
@@ -263,7 +318,7 @@ export function AnimatedAIChat({
     <div className="flex h-full flex-col gap-1 overflow-hidden select-none">
       {/* Brand row */}
       <div className={`flex h-16 shrink-0 items-center gap-2 px-4 ${collapsed ? "justify-center px-2" : ""}`}>
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary text-sm font-black text-primary-foreground">
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-linear-to-br from-primary-vivid to-primary-vivid-soft text-sm font-black text-primary-foreground">
           R
         </span>
         {!collapsed && (
@@ -307,7 +362,7 @@ export function AnimatedAIChat({
             onCloseMobile?.();
           }}
           title="Start new chat"
-          className={`group flex w-full items-center gap-2.5 rounded-xl bg-primary text-primary-foreground shadow-sm transition-all duration-300 hover:opacity-90 active:scale-[0.98] cursor-pointer ${
+          className={`group flex w-full items-center gap-2.5 rounded-xl bg-linear-to-r from-primary-vivid to-primary-vivid-soft text-primary-foreground shadow-[0_6px_18px_-8px_var(--primary-glow)] transition-all duration-300 hover:brightness-105 active:scale-[0.98] cursor-pointer ${
             collapsed ? "h-10 w-10 justify-center" : "px-3 py-2.5 text-xs font-black"
           }`}
         >
@@ -551,9 +606,14 @@ export function AnimatedAIChat({
           <>
             <div className="scroll-slim flex-1 overflow-y-auto px-4 py-6 pt-20 md:px-8">
               <div className="mx-auto max-w-3xl space-y-6">
-                {messages.map((message) => (
+                {messages.map((message) => {
+                  const isThinking = message.role === "assistant" && !!message.intents?.includes("THINKING");
+                  return (
                   <div key={message.id} className="space-y-4">
                     <div className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                      {isThinking ? (
+                        <ThinkingIndicator status={message.content} />
+                      ) : (
                       <div
                         className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm select-text ${
                           message.role === "user"
@@ -568,6 +628,7 @@ export function AnimatedAIChat({
                           </div>
                         )}
                       </div>
+                      )}
                     </div>
 
                     {/* Products carousel */}
@@ -623,13 +684,14 @@ export function AnimatedAIChat({
                       </motion.div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
                 <div ref={chatFeedEndRef} />
               </div>
             </div>
 
             {/* Bottom input (unbordered, floats over the canvas) */}
-            <div className="bg-gradient-to-t from-background via-background/90 to-transparent px-4 pb-4 pt-2 md:px-8">
+            <div className="bg-linear-to-t from-background via-background/90 to-transparent px-4 pb-4 pt-2 md:px-8">
               <div className="mx-auto max-w-3xl">
                 {inputBar}
                 <div className="mt-2 text-center text-[10px] text-muted-foreground/50">
