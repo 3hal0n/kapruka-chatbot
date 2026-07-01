@@ -72,10 +72,9 @@ interface AnimatedAIChatProps {
 
 // Ruki quick-start suggestions — mirrors the Kapruka gifting shortcuts
 const SUGGESTION_PILLS: { label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { label: "Find gift for friend", icon: Gift },
-  { label: "Send flowers", icon: Flower },
-  { label: "Deals & monitors", icon: Percent },
-  { label: "Track last order", icon: Truck },
+  { label: "Build a surprise box", icon: Gift },
+  { label: "Find a birthday pick", icon: Flower },
+  { label: "Compare top deals", icon: Percent },
 ];
 
 function EmptyStateIllustration({ theme }: { theme: "light" | "dark" }) {

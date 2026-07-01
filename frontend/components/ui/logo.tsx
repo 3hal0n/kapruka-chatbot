@@ -1,76 +1,64 @@
+"use client";
+
 import React from "react";
 
-export function RukiLogo({ className = "w-16 h-16" }: { className?: string }) {
-  const purpleGradId = React.useId();
-  const goldSmileGradId = React.useId();
+interface RukiLogoProps {
+  className?: string;
+  animateHover?: boolean;
+}
+
+export function RukiLogo({ className = "w-16 h-16", animateHover = true }: RukiLogoProps) {
+  // Composing class names locally to prevent Next.js project dependency errors
+  const baseClasses = "select-none fill-none transition-transform duration-300 ease-out";
+  const hoverClasses = animateHover ? "hover:scale-105 hover:rotate-[2deg]" : "";
+  const combinedClassName = `${baseClasses} ${hoverClasses} ${className}`.trim();
 
   return (
     <svg
-      className={className}
+      className={combinedClassName}
       viewBox="0 0 100 100"
-      fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
       <defs>
-        {/* Deep Kapruka Purple Gradient */}
-        <linearGradient id={purpleGradId} x1="20" y1="20" x2="60" y2="70" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#5B2D9A" />
-          <stop offset="100%" stopColor="#3c1b63" />
+        {/* Liquid Gold Smile Ring Gradient */}
+        <linearGradient id="kaprukaGoldSmile" x1="10" y1="70" x2="90" y2="70" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#FFE082" stopOpacity="0.2" />
+          <stop offset="15%" stopColor="#FFCA28" />
+          <stop offset="50%" stopColor="#FFD700" />
+          <stop offset="85%" stopColor="#FFB300" />
+          <stop offset="100%" stopColor="#FF8F00" stopOpacity="0.8" />
         </linearGradient>
 
-        {/* Dynamic Kapruka Yellow/Gold Smile Arc Gradient */}
-        <linearGradient id={goldSmileGradId} x1="15" y1="75" x2="85" y2="75" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stopColor="#FFE57F" stopOpacity="0.4" />
-          <stop offset="50%" stopColor="#FFD700" />
-          <stop offset="100%" stopColor="#FFA000" stopOpacity="0.9" />
+        {/* Brand Purple for the Eyes */}
+        <linearGradient id="rukiPurpleEye" x1="30" y1="30" x2="70" y2="30" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#6C34C4" />
+          <stop offset="100%" stopColor="#3c1b63" />
         </linearGradient>
       </defs>
 
-      {/* Main Structural Letter "R" Body */}
-      <path
-        d="M 28 20 
-           L 52 20 
-           C 68 20, 68 44, 52 44 
-           L 28 44 
-           Z"
-        fill={`url(#${purpleGradId})`}
-      />
-      <path
-        d="M 28 20 
-           L 28 72"
-        stroke={`url(#${purpleGradId})`}
-        strokeWidth="9"
-        strokeLinecap="round"
+      {/* Left Eye Dot */}
+      <circle 
+        cx="35" 
+        cy="40" 
+        r="5.5" 
+        fill="url(#rukiPurpleEye)" 
       />
 
-      {/* The Signature Kapruka Gold Smile Ring Asset */}
-      <path
-        d="M 22 68 
-           Q 50 88, 78 68"
-        stroke={`url(#${goldSmileGradId})`}
-        strokeWidth="7.5"
-        strokeLinecap="round"
-        fill="none"
+      {/* Right Eye Dot */}
+      <circle 
+        cx="65" 
+        cy="40" 
+        r="5.5" 
+        fill="url(#rukiPurpleEye)" 
       />
 
-      {/* Connecting Dynamic Leg blending R into the Ring */}
+      {/* The Signature Parabolic Kapruka Yellow Gold Smile Ring Mouth */}
       <path
-        d="M 44 44 
-           Q 54 56, 64 68"
-        stroke={`url(#${purpleGradId})`}
-        strokeWidth="8.5"
+        d="M 22 58 
+           C 36 76, 64 76, 78 58"
+        stroke="url(#kaprukaGoldSmile)"
+        strokeWidth="7"
         strokeLinecap="round"
-        fill="none"
-      />
-
-      {/* Minimal AI Sentient Diamond Spark */}
-      <path
-        d="M 72 24 
-           Q 78 30, 84 30 
-           Q 78 30, 78 36 
-           Q 78 30, 72 30 
-           Q 78 30, 72 24 Z"
-        fill="#FFD700"
       />
     </svg>
   );
