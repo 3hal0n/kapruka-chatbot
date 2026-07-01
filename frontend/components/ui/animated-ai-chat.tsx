@@ -637,9 +637,11 @@ export function AnimatedAIChat({
                             {message.products.length} live matches
                           </span>
                         </div>
-                        <div className="scroll-hidden -mx-1 flex snap-x snap-mandatory gap-4 overflow-x-auto px-1 pb-3">
+                        {/* Mobile: horizontal snap carousel · Desktop (sm+): a
+                            wrapping grid so cards never run off-screen. */}
+                        <div className="scroll-hidden -mx-1 flex snap-x snap-mandatory gap-3 overflow-x-auto px-1 pb-3 sm:mx-0 sm:grid sm:grid-cols-3 sm:gap-3 sm:overflow-visible sm:px-0">
                           {message.products.map((p) => (
-                            <div key={p.id} className="w-60 shrink-0 snap-start sm:w-64">
+                            <div key={p.id} className="w-40 shrink-0 snap-start sm:w-auto">
                               <ProductCard product={p} onAdd={() => onAddToCart?.(p)} mode={activeMode} onAddToBox={onAddToBox} />
                             </div>
                           ))}
