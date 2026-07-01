@@ -71,6 +71,11 @@ export default function RukiPage() {
   const userIdRef = useRef<string>("");
   if (!userIdRef.current) userIdRef.current = generateUserId();
 
+  // ── Guest label — derived client-side only after mount so the random
+  // session id never diverges between the server and client render pass.
+  const [guestLabel, setGuestLabel] = useState("Guest");
+  const syncGuestLabel = () => setGuestLabel(`Guest #${userIdRef.current.slice(-4).toUpperCase()}`);
+
   // ── Chat state
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
@@ -145,19 +150,16 @@ export default function RukiPage() {
   // ── Load Chat History on mount
   useEffect(() => {
     if (typeof window !== "undefined") {
+      syncGuestLabel();
       const storedHistory = localStorage.getItem("ruki_chat_history");
       if (storedHistory) {
         setChatHistory(JSON.parse(storedHistory));
       }
       
-      // Load current messages
+      // Load current messages — otherwise leave empty so the hero landing view shows
       const storedMessages = localStorage.getItem(`ruki_chat_messages_${userIdRef.current}`);
       if (storedMessages) {
         setMessages(JSON.parse(storedMessages));
-      } else {
-        // Initial Greeting
-        const greetingText = "Hello! ආයුබෝවන්! I am Ruki AI, your personal Kapruka gifting companion. How can I help today?";
-        setMessages([{ id: "initial-greeting", sender: "ai", text: greetingText }]);
       }
     }
   }, []);
@@ -401,6 +403,7 @@ export default function RukiPage() {
 
   const handleSelectHistoryItem = (id: string) => {
     userIdRef.current = id;
+    syncGuestLabel();
     const stored = localStorage.getItem(`ruki_chat_messages_${id}`);
     if (stored) {
       setMessages(JSON.parse(stored));
@@ -412,10 +415,13 @@ export default function RukiPage() {
 
   const handleStartNewChat = () => {
     userIdRef.current = generateUserId();
-    const greetingText = "Hello! ආයුබෝවන්! I am Ruki AI, your personal Kapruka gifting companion. How can I help today?";
-    const newMsg: Message = { id: "initial-greeting", sender: "ai", text: greetingText };
-    setMessages([newMsg]);
-    localStorage.setItem(`ruki_chat_messages_${userIdRef.current}`, JSON.stringify([newMsg]));
+    syncGuestLabel();
+    setMessages([]);
+    setIsTyping(false);
+    setCurrentStatus(null);
+    setCurrentIntents([]);
+    setStreamedText("");
+    localStorage.removeItem(`ruki_chat_messages_${userIdRef.current}`);
   };
 
   // Convert Message array to ChatMessage format for AnimatedAIChat
@@ -550,6 +556,8 @@ export default function RukiPage() {
           onToggleSidebar={() => setLeftOpen(!leftOpen)}
           chatHistory={chatHistory}
           onSelectHistoryItem={handleSelectHistoryItem}
+          onStartNewChat={handleStartNewChat}
+          guestId={guestLabel}
           theme={theme}
           onToggleTheme={toggleTheme}
           onClearHistory={handleClearHistory}

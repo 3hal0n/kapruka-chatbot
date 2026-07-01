@@ -16,9 +16,18 @@ import {
   ShoppingCart,
   AlertCircle,
   Plus,
+  Gift,
+  Flower,
+  Percent,
+  Truck,
+  Sparkles,
+  PanelLeftClose,
+  PanelLeftOpen,
+  ChevronDown,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ProductCard, Product } from "@/components/ProductCard";
+import { KaprukaSmileGlow } from "@/components/ui/kapruka-smile-glow";
 
 export interface Message {
   id: string;
@@ -43,14 +52,16 @@ interface AnimatedAIChatProps {
   onToggleSidebar?: () => void;
   chatHistory?: { id: string; title: string; date: string }[];
   onSelectHistoryItem?: (id: string) => void;
+  onStartNewChat?: () => void;
   introComponent?: React.ReactNode;
 
-  // Theme & tools (now hosted in the sidebar bottom, not a top navbar)
+  // Theme & tools (hosted in the sidebar, not a top navbar)
   theme?: "light" | "dark";
   onToggleTheme?: () => void;
   onClearHistory?: () => void;
   onToggleCart?: () => void;
   cartCount?: number;
+  guestId?: string;
 
   // Gifting flow props
   onAddToCart?: (product: Product) => void;
@@ -58,12 +69,12 @@ interface AnimatedAIChatProps {
   activeMode?: string;
 }
 
-// Octo-style quick-start suggestions
-const SUGGESTION_PILLS = [
-  "Find gift for friend",
-  "Send flowers",
-  "Deals & monitors",
-  "Track last order",
+// Ruki quick-start suggestions — mirrors the Kapruka gifting shortcuts
+const SUGGESTION_PILLS: { label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { label: "Find gift for friend", icon: Gift },
+  { label: "Send flowers", icon: Flower },
+  { label: "Deals & monitors", icon: Percent },
+  { label: "Track last order", icon: Truck },
 ];
 
 function EmptyStateIllustration({ theme }: { theme: "light" | "dark" }) {
@@ -79,36 +90,6 @@ function EmptyStateIllustration({ theme }: { theme: "light" | "dark" }) {
       <path d="M22 28L25 25M25 25L28 28M25 25V31M19 25H31" stroke="currentColor" strokeWidth="1" strokeLinecap="round" className="text-primary/30" />
       <circle cx="80" cy="20" r="2" fill="currentColor" className="text-amber/50" />
     </svg>
-  );
-}
-
-/**
- * GeminiAuroraMesh — a fluid, breathing radial glow behind the greeting.
- * Kapruka-purple dominant, whisper-subtle so it reads premium (not muddy) on
- * both the white light canvas and the carbon-black dark canvas.
- */
-function GeminiAuroraMesh() {
-  return (
-    <div aria-hidden="true" className="lab-bg pointer-events-none absolute inset-0 overflow-hidden">
-      <motion.div
-        className="absolute left-1/2 top-1/2 h-[560px] w-[560px] -translate-x-1/2 -translate-y-1/2 rounded-full blur-[110px]"
-        style={{ background: "radial-gradient(circle, rgba(60,27,99,0.20), transparent 65%)" }}
-        animate={{ scale: [1, 1.15, 1], opacity: [0.55, 0.85, 0.55] }}
-        transition={{ duration: 9, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        className="absolute left-[38%] top-[40%] h-[360px] w-[360px] rounded-full blur-[90px]"
-        style={{ background: "radial-gradient(circle, rgba(124,58,173,0.18), transparent 60%)" }}
-        animate={{ x: [0, 40, -20, 0], y: [0, -30, 20, 0] }}
-        transition={{ duration: 13, repeat: Infinity, ease: "easeInOut" }}
-      />
-      <motion.div
-        className="absolute left-[58%] top-[54%] h-[300px] w-[300px] rounded-full blur-[90px]"
-        style={{ background: "radial-gradient(circle, rgba(147,112,219,0.14), transparent 60%)" }}
-        animate={{ x: [0, -30, 20, 0], y: [0, 20, -20, 0] }}
-        transition={{ duration: 15, repeat: Infinity, ease: "easeInOut" }}
-      />
-    </div>
   );
 }
 
@@ -151,18 +132,21 @@ export function AnimatedAIChat({
   onToggleSidebar,
   chatHistory = [],
   onSelectHistoryItem,
+  onStartNewChat,
   introComponent,
   theme = "light",
   onToggleTheme,
   onClearHistory,
   onToggleCart,
   cartCount = 0,
+  guestId,
   onAddToCart,
   onAddToBox,
   activeMode = "Smart Shopping",
 }: AnimatedAIChatProps) {
   const [inputValue, setInputValue] = React.useState("");
   const [isFocused, setIsFocused] = React.useState(false);
+  const [railCollapsed, setRailCollapsed] = React.useState(false);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const chatFeedEndRef = React.useRef<HTMLDivElement>(null);
 
@@ -220,11 +204,19 @@ export function AnimatedAIChat({
         onKeyDown={handleKeyDown}
         onFocus={() => setIsFocused(true)}
         onBlur={() => setIsFocused(false)}
-        placeholder="Ask Ruki anything — gifts, flowers, deals, delivery…"
+        placeholder="What's on your mind?"
         className="max-h-32 min-h-[24px] flex-1 resize-none self-center overflow-y-auto bg-transparent py-1.5 text-sm leading-relaxed outline-none placeholder:text-muted-foreground/60 select-text"
       />
 
       <div className="flex shrink-0 items-center gap-1.5">
+        <button
+          type="button"
+          title="Smart suggestions"
+          className="hidden h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer sm:flex"
+        >
+          <Sparkles className="h-4 w-4" />
+        </button>
+
         <button
           onMouseDown={onStartRecording}
           onMouseUp={onStopRecording}
@@ -263,107 +255,203 @@ export function AnimatedAIChat({
   const toolBtn =
     "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-xs font-bold text-muted-foreground transition-all duration-300 hover:bg-primary-soft hover:text-foreground active:scale-[0.98] cursor-pointer";
 
+  const initials = (guestId || "Guest").replace(/[^a-zA-Z0-9]/g, "").slice(0, 1).toUpperCase() || "G";
+
+  // ── Shared sidebar body — rendered both as the persistent desktop rail and
+  // the slide-out mobile overlay, so the two never drift out of sync. ──────
+  const sidebarBody = (collapsed: boolean, onCloseMobile?: () => void) => (
+    <div className="flex h-full flex-col gap-1 overflow-hidden select-none">
+      {/* Brand row */}
+      <div className={`flex h-16 shrink-0 items-center gap-2 px-4 ${collapsed ? "justify-center px-2" : ""}`}>
+        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-primary text-sm font-black text-primary-foreground">
+          R
+        </span>
+        {!collapsed && (
+          <span className="flex min-w-0 flex-1 items-baseline gap-1.5 overflow-hidden">
+            <span className="text-base font-black tracking-tight text-foreground">Ruki</span>
+            <span className="truncate text-[10px] font-bold uppercase tracking-widest text-muted-foreground/70">
+              Kapruka
+            </span>
+          </span>
+        )}
+        {onCloseMobile ? (
+          <button
+            onClick={onCloseMobile}
+            className="ml-auto grid h-8 w-8 shrink-0 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer"
+            aria-label="Close menu"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        ) : (
+          <button
+            onClick={() => setRailCollapsed((p) => !p)}
+            className="ml-auto hidden h-8 w-8 shrink-0 place-items-center rounded-xl text-muted-foreground/70 transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer md:grid"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          </button>
+        )}
+      </div>
+
+      {/* Quick actions */}
+      <div className={`px-3 pt-1 ${collapsed ? "px-2" : ""}`}>
+        {!collapsed && (
+          <div className="mb-2 px-1 text-[10px] font-black uppercase tracking-wider text-muted-foreground/60">
+            Quick actions
+          </div>
+        )}
+        <button
+          onClick={() => {
+            onStartNewChat?.();
+            onCloseMobile?.();
+          }}
+          title="Start new chat"
+          className={`group flex w-full items-center gap-2.5 rounded-xl bg-primary text-primary-foreground shadow-sm transition-all duration-300 hover:opacity-90 active:scale-[0.98] cursor-pointer ${
+            collapsed ? "h-10 w-10 justify-center" : "px-3 py-2.5 text-xs font-black"
+          }`}
+        >
+          <Plus className="h-4 w-4 shrink-0" />
+          {!collapsed && "Start new chat"}
+        </button>
+      </div>
+
+      {/* Recent history */}
+      <div className={`mt-3 flex-1 overflow-y-auto px-3 ${collapsed ? "px-2" : ""}`}>
+        {!collapsed && (
+          <div className="mb-2 flex items-center gap-1.5 px-1 text-[10px] font-black uppercase tracking-wider text-muted-foreground/60">
+            <History className="h-3 w-3" />
+            Recent
+          </div>
+        )}
+        {collapsed ? (
+          <div className="flex flex-col items-center gap-2">
+            <span className="grid h-9 w-9 place-items-center rounded-xl text-muted-foreground/50">
+              <History className="h-4 w-4" />
+            </span>
+          </div>
+        ) : chatHistory.length === 0 ? (
+          <div className="flex h-24 items-center justify-center rounded-xl border border-dashed border-border/50 text-center text-[11px] font-semibold text-muted-foreground/50">
+            No chats yet
+          </div>
+        ) : (
+          <div className="scroll-slim space-y-1">
+            {chatHistory.map((chatItem) => (
+              <button
+                key={chatItem.id}
+                onClick={() => {
+                  onSelectHistoryItem?.(chatItem.id);
+                  onCloseMobile?.();
+                }}
+                className="flex w-full flex-col gap-0.5 rounded-xl border border-transparent px-3 py-2.5 text-left transition-all duration-300 hover:border-border/30 hover:bg-primary-soft cursor-pointer"
+              >
+                <span className="truncate text-xs font-bold text-foreground/90">{chatItem.title}</span>
+                <span className="text-[10px] text-muted-foreground/60">{chatItem.date}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Utility tray */}
+      <div className={`shrink-0 space-y-0.5 border-t border-border p-3 ${collapsed ? "px-2" : ""}`}>
+        {onToggleTheme && (
+          <button
+            onClick={onToggleTheme}
+            title="Toggle theme"
+            className={collapsed ? "flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer mx-auto" : toolBtn}
+          >
+            {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+            {!collapsed && (theme === "light" ? "Dark mode" : "Light mode")}
+          </button>
+        )}
+        {onToggleMute && (
+          <button
+            onClick={onToggleMute}
+            title="Toggle voice output"
+            className={collapsed ? "flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer mx-auto" : toolBtn}
+          >
+            {isAudioMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4 text-primary" />}
+            {!collapsed && (
+              <>
+                Voice output
+                <span className="ml-auto text-[10px] font-black uppercase tracking-wider opacity-70">
+                  {isAudioMuted ? "Off" : "On"}
+                </span>
+              </>
+            )}
+          </button>
+        )}
+        {onClearHistory && (
+          <button
+            onClick={onClearHistory}
+            title="Clear chat"
+            className={collapsed ? "flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer mx-auto" : toolBtn}
+          >
+            <Trash2 className="h-4 w-4" />
+            {!collapsed && "Clear chat"}
+          </button>
+        )}
+      </div>
+
+      {/* Guest / session card */}
+      <div className={`shrink-0 border-t border-border p-3 ${collapsed ? "px-2" : ""}`}>
+        <div className={`flex items-center gap-2.5 rounded-xl px-2 py-2 ${collapsed ? "justify-center" : ""}`}>
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber text-xs font-black text-amber-foreground">
+            {initials}
+          </span>
+          {!collapsed && (
+            <>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-bold text-foreground/90">{guestId || "Guest"}</p>
+                <p className="text-[10px] text-muted-foreground/60">Guest</p>
+              </div>
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="relative flex h-full w-full overflow-hidden bg-background text-foreground select-none">
-      {/* Slide-out chat history sidebar */}
+      {/* Persistent desktop rail */}
+      <aside
+        className={`hidden shrink-0 flex-col border-r border-border bg-surface/40 backdrop-blur-xl transition-all duration-300 md:flex ${
+          railCollapsed ? "w-19" : "w-66"
+        }`}
+      >
+        {sidebarBody(railCollapsed)}
+      </aside>
+
+      {/* Mobile slide-out overlay */}
       <AnimatePresence>
         {sidebarOpen && (
-          <motion.aside
-            initial={{ x: -300, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: -300, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 300, damping: 32 }}
-            className="absolute bottom-0 left-0 top-0 z-50 flex w-[280px] flex-col border-r border-border bg-background/95 backdrop-blur-xl md:relative"
-          >
-            <div className="flex h-16 items-center justify-between px-4">
-              <span className="flex items-center gap-2 text-sm font-extrabold uppercase tracking-wider text-foreground">
-                <History className="h-4 w-4 text-primary" />
-                History
-              </span>
-              <button
-                onClick={onToggleSidebar}
-                className="rounded-xl p-1.5 text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer"
-                aria-label="Close history"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-
-            {/* New chat */}
-            {onClearHistory && (
-              <div className="px-3 pb-2">
-                <button
-                  onClick={onClearHistory}
-                  className="flex w-full items-center gap-2 rounded-xl border border-border bg-surface/60 px-3 py-2.5 text-xs font-bold text-foreground transition-all duration-300 hover:border-primary/40 hover:bg-primary-soft active:scale-[0.98] cursor-pointer"
-                >
-                  <Plus className="h-4 w-4 text-primary" />
-                  New chat
-                </button>
-              </div>
-            )}
-
-            {/* Chat log history array */}
-            <div className="scroll-slim flex-1 space-y-1.5 overflow-y-auto p-3">
-              {chatHistory.length === 0 ? (
-                <div className="flex h-32 items-center justify-center text-center text-xs font-semibold text-muted-foreground/60">
-                  No previous chats yet
-                </div>
-              ) : (
-                chatHistory.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => onSelectHistoryItem?.(item.id)}
-                    className="flex w-full flex-col gap-1 rounded-xl border border-transparent px-3 py-3 text-left text-xs transition-all duration-300 hover:border-border/30 hover:bg-primary-soft cursor-pointer"
-                  >
-                    <span className="truncate font-bold text-foreground/90">{item.title}</span>
-                    <span className="text-[10px] text-muted-foreground/60">{item.date}</span>
-                  </button>
-                ))
-              )}
-            </div>
-
-            {/* ── Bottom tool tray: theme · clear · voice · cart ── */}
-            <div className="space-y-0.5 border-t border-border p-3">
-              {onToggleTheme && (
-                <button onClick={onToggleTheme} className={toolBtn} title="Toggle theme">
-                  {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-                  {theme === "light" ? "Dark mode" : "Light mode"}
-                </button>
-              )}
-              {onToggleMute && (
-                <button onClick={onToggleMute} className={toolBtn} title="Toggle voice output">
-                  {isAudioMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4 text-primary" />}
-                  Voice output
-                  <span className="ml-auto text-[10px] font-black uppercase tracking-wider opacity-70">
-                    {isAudioMuted ? "Off" : "On"}
-                  </span>
-                </button>
-              )}
-              {onClearHistory && (
-                <button onClick={onClearHistory} className={toolBtn} title="Clear chat">
-                  <Trash2 className="h-4 w-4" />
-                  Clear chat
-                </button>
-              )}
-              {onToggleCart && (
-                <button onClick={onToggleCart} className={toolBtn} title="Open cart">
-                  <ShoppingCart className="h-4 w-4" />
-                  Cart
-                  {cartCount > 0 && (
-                    <span className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-amber px-1 text-[10px] font-bold text-amber-foreground">
-                      {cartCount}
-                    </span>
-                  )}
-                </button>
-              )}
-            </div>
-          </motion.aside>
+          <React.Fragment>
+            <motion.div
+              className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm md:hidden"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={onToggleSidebar}
+            />
+            <motion.aside
+              initial={{ x: -300, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: -300, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 300, damping: 32 }}
+              className="fixed inset-y-0 left-0 z-50 flex w-70 flex-col border-r border-border bg-background/95 backdrop-blur-xl md:hidden"
+            >
+              {sidebarBody(false, onToggleSidebar)}
+            </motion.aside>
+          </React.Fragment>
         )}
       </AnimatePresence>
 
-      {/* Full-canvas conversation surface — no top navbar */}
+      {/* Full-canvas conversation surface */}
       <div className="relative flex flex-1 flex-col overflow-hidden">
-        {/* Floating minimalist sidebar toggle (upper-left) */}
+        {/* Floating mobile sidebar toggle (upper-left) */}
         <AnimatePresence>
           {!sidebarOpen && (
             <motion.button
@@ -371,19 +459,36 @@ export function AnimatedAIChat({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.8 }}
               onClick={onToggleSidebar}
-              className="glass absolute left-4 top-4 z-40 grid h-10 w-10 place-items-center rounded-full text-muted-foreground transition-colors hover:text-foreground cursor-pointer"
-              title="Open history"
-              aria-label="Open history"
+              className="glass absolute left-4 top-4 z-40 grid h-10 w-10 place-items-center rounded-full text-muted-foreground transition-colors hover:text-foreground cursor-pointer md:hidden"
+              title="Open menu"
+              aria-label="Open menu"
             >
               <Menu className="h-5 w-5" />
             </motion.button>
           )}
         </AnimatePresence>
 
+        {/* Persistent cart pill (top-right, always visible) */}
+        {onToggleCart && (
+          <button
+            onClick={onToggleCart}
+            className="glass absolute right-4 top-4 z-40 flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-bold text-foreground transition-colors hover:text-primary cursor-pointer"
+            aria-label="Open cart"
+          >
+            <ShoppingCart className="h-4 w-4" />
+            <span className="hidden sm:inline">Cart</span>
+            {cartCount > 0 && (
+              <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber px-1 text-[10px] font-black text-amber-foreground">
+                {cartCount}
+              </span>
+            )}
+          </button>
+        )}
+
         {isEmpty ? (
-          /* ── Octo empty-state: centered greeting + input + suggestion pills ── */
+          /* ── Empty-state: eyebrow + greeting + input + suggestion pills ── */
           <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden px-4">
-            <GeminiAuroraMesh />
+            <KaprukaSmileGlow />
 
             <motion.div
               initial="hidden"
@@ -391,12 +496,26 @@ export function AnimatedAIChat({
               variants={{ hidden: {}, show: { transition: { staggerChildren: 0.09, delayChildren: 0.05 } } }}
               className="relative z-10 flex w-full max-w-2xl flex-col items-center text-center"
             >
+              <motion.span
+                variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }}
+                className="mb-3 text-[11px] font-black uppercase tracking-[0.2em] text-muted-foreground/60"
+              >
+                Kapruka
+              </motion.span>
+
               <motion.h1
                 variants={{ hidden: { opacity: 0, y: 18 }, show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 220, damping: 22 } } }}
-                className="mb-8 text-4xl font-black leading-[1.1] tracking-tight text-foreground md:text-5xl"
+                className="mb-3 text-4xl font-black leading-[1.1] tracking-tight text-foreground md:text-5xl"
               >
-                How can I help today?
+                Hi, I&apos;m <span className="text-aurora">Ruki</span>
               </motion.h1>
+
+              <motion.p
+                variants={{ hidden: { opacity: 0, y: 14 }, show: { opacity: 1, y: 0 } }}
+                className="mb-8 max-w-md text-sm font-semibold text-muted-foreground"
+              >
+                Your Kapruka gifting co-pilot — always just a message away.
+              </motion.p>
 
               <motion.div
                 variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 220, damping: 24 } } }}
@@ -409,16 +528,17 @@ export function AnimatedAIChat({
                 variants={{ hidden: {}, show: { transition: { staggerChildren: 0.06, delayChildren: 0.15 } } }}
                 className="mt-5 flex flex-wrap justify-center gap-2"
               >
-                {SUGGESTION_PILLS.map((pill) => (
+                {SUGGESTION_PILLS.map(({ label, icon: Icon }) => (
                   <motion.button
-                    key={pill}
+                    key={label}
                     variants={{ hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } }}
                     whileHover={{ scale: 1.04 }}
                     whileTap={{ scale: 0.96 }}
-                    onClick={() => onSendMessage?.(pill)}
-                    className="rounded-full border border-border bg-surface/60 px-4 py-2 text-xs font-semibold text-muted-foreground backdrop-blur-sm transition-colors hover:border-primary/40 hover:text-foreground cursor-pointer"
+                    onClick={() => onSendMessage?.(label)}
+                    className="flex items-center gap-1.5 rounded-full border border-border bg-surface/60 px-4 py-2 text-xs font-semibold text-muted-foreground backdrop-blur-sm transition-colors hover:border-primary/40 hover:text-foreground cursor-pointer"
                   >
-                    {pill}
+                    <Icon className="h-3.5 w-3.5" />
+                    {label}
                   </motion.button>
                 ))}
               </motion.div>
