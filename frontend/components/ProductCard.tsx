@@ -2,7 +2,7 @@
 
 import React, { useRef } from "react";
 import { motion } from "framer-motion";
-import { ExternalLink, Package } from "lucide-react";
+import { ExternalLink, Package, ShoppingCart } from "lucide-react";
 
 export interface Product {
   id: string;
@@ -86,7 +86,6 @@ export function ProductCard({ product, onAdd, mode, onAddToBox }: ProductCardPro
 
   const rawPrice = product.price;
   const finalPrice = typeof rawPrice === "object" ? rawPrice.amount : Number(rawPrice);
-  const tag = product.category || product.tag || "General";
   const code = product.id || product.code || "";
   const match =
     product.match_percentage !== undefined
@@ -117,65 +116,55 @@ export function ProductCard({ product, onAdd, mode, onAddToBox }: ProductCardPro
   return (
     <motion.div
       variants={itemVariants}
-      whileHover={{ y: -4 }}
-      className="group flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-sm transition-all duration-300 hover:shadow-xl hover:shadow-primary-glow/30 hover:border-primary/40"
+      whileHover={{ y: -3 }}
+      className="group flex h-full flex-col overflow-hidden rounded-2xl border border-border bg-surface shadow-sm transition-all duration-300 hover:shadow-lg hover:shadow-primary-glow/25 hover:border-primary/30"
     >
-      {/* Product image */}
-      <div className="relative aspect-square overflow-hidden bg-muted">
+      {/* Product image — shallower 4:3 crop keeps the whole card compact */}
+      <div className="relative aspect-[4/3] overflow-hidden bg-muted">
         <img
           src={imageUrl}
           alt={product.name}
           loading="lazy"
           className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
-        {/* Live inventory warning (10% accent reserved for urgency) */}
-        {isLowStock && !isBoxMode && (
-          <div className="absolute top-2 left-2 flex items-center gap-1 rounded-full bg-amber px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-foreground shadow select-none">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-foreground" />
-            Low stock
+        {/* Live inventory pill */}
+        {!isBoxMode && (
+          <div className="absolute left-2 top-2 flex items-center gap-1 rounded-full bg-surface/90 px-2 py-0.5 text-[10px] font-bold text-foreground/80 shadow-sm backdrop-blur-sm select-none">
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${isLowStock ? "animate-pulse bg-amber" : "bg-emerald-500"}`}
+            />
+            {stock}
           </div>
         )}
         {/* Gift Box mode badge overlay */}
         {isBoxMode && (
-          <div className="absolute top-2 right-2 rounded-full bg-primary/90 px-2 py-0.5 text-[10px] font-bold text-primary-foreground shadow select-none">
+          <div className="absolute right-2 top-2 rounded-full bg-primary/90 px-2 py-0.5 text-[10px] font-bold text-primary-foreground shadow select-none">
             Box Mode
           </div>
         )}
       </div>
 
-      <div className="flex flex-1 flex-col gap-2 p-4">
-        <div className="flex items-start justify-between gap-2">
-          <h3 className="text-sm font-extrabold leading-snug tracking-tight line-clamp-2 min-h-10">
-            {product.name}
-          </h3>
-          <span className="shrink-0 rounded-full bg-primary-soft px-2.5 py-0.5 text-[10px] font-bold text-primary select-none">
-            {tag}
-          </span>
-        </div>
+      <div className="flex flex-1 flex-col p-3">
+        <h3 className="text-[13px] font-bold leading-snug tracking-tight line-clamp-2 min-h-[34px]">
+          {product.name}
+        </h3>
 
-        <p className="truncate text-[11px] font-mono text-muted-foreground select-none">
-          ID: <span className="text-foreground/80 select-all">{code}</span>
-        </p>
-
-        <p className="text-xs font-medium leading-relaxed text-muted-foreground">
-          <span className="font-bold text-foreground">{match}%</span> – Matched by Kapruka MCP live product search.
-        </p>
-
-        <div className="mt-1 flex items-center justify-between">
-          <span className="text-base font-extrabold text-primary select-none">
+        <div className="mt-1 flex items-center justify-between gap-2">
+          <span className="text-[15px] font-extrabold text-primary select-none">
             Rs. {finalPrice.toLocaleString()}
           </span>
-          <span className="text-[11px] font-bold text-muted-foreground select-none">
-            {stock}
+          <span className="shrink-0 rounded-full bg-primary-soft px-2 py-0.5 text-[9px] font-bold text-primary select-none">
+            {match}% match
           </span>
         </div>
 
-        <div className="mt-2 flex gap-2">
+        {/* Actions — stacked full-width so labels never wrap or clip */}
+        <div className="mt-3 flex flex-col gap-1.5">
           {isBoxMode ? (
             <button
               ref={addBoxBtnRef}
               onClick={handleAddToBox}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-extrabold text-primary-foreground shadow-sm transition-all duration-300 ease-in-out hover:brightness-110 active:scale-[0.97] cursor-pointer"
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-extrabold text-primary-foreground shadow-sm transition-all duration-300 ease-in-out hover:brightness-110 active:scale-[0.97] cursor-pointer"
             >
               <Package className="h-3.5 w-3.5" />
               Add to Box
@@ -184,8 +173,9 @@ export function ProductCard({ product, onAdd, mode, onAddToBox }: ProductCardPro
             <button
               id={cartBtnId}
               onClick={onAdd}
-              className="flex-1 rounded-xl bg-amber px-3 py-2 text-sm font-extrabold text-amber-foreground shadow-sm transition-all duration-300 ease-in-out hover:brightness-105 active:scale-[0.97] cursor-pointer"
+              className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-amber px-3 py-2 text-xs font-extrabold text-amber-foreground shadow-sm transition-all duration-300 ease-in-out hover:brightness-105 active:scale-[0.97] cursor-pointer"
             >
+              <ShoppingCart className="h-3.5 w-3.5" />
               Add to Cart
             </button>
           )}
@@ -194,7 +184,7 @@ export function ProductCard({ product, onAdd, mode, onAddToBox }: ProductCardPro
             href={buyUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="rounded-xl border border-border bg-surface px-3 py-2 text-sm font-bold transition-all duration-300 ease-in-out hover:bg-muted flex items-center justify-center gap-1 text-foreground/80 hover:text-foreground"
+            className="flex w-full items-center justify-center gap-1 rounded-lg border border-border bg-surface px-3 py-1.5 text-[11px] font-bold text-muted-foreground transition-all duration-300 ease-in-out hover:bg-muted hover:text-foreground"
           >
             Buy on Kapruka
             <ExternalLink className="h-3 w-3" />

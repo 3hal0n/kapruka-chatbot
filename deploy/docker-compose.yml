@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Single-VM stack for Ruki: PostgreSQL + FastAPI backend + Next.js frontend.
 # Build contexts are relative to this file (deploy/), hence ../backend, ../frontend.
 #
