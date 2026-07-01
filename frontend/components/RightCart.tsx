@@ -47,15 +47,16 @@ export function RightCart({
   onGroupGift,
 }: RightCartProps) {
   const content = (
-    <div className="flex h-full w-[320px] shrink-0 flex-col gap-4 overflow-hidden border-l border-border bg-background p-4">
+    <div className="flex h-full w-[340px] max-w-[88vw] shrink-0 flex-col gap-4 overflow-hidden border-l border-border bg-background/95 backdrop-blur-xl p-4">
       <div className="flex items-center justify-between">
-        <h2 className="flex items-center gap-2 text-lg font-extrabold tracking-tight text-primary select-none">
-          Cart <ShoppingCart className="h-5 w-5" />
+        <h2 className="flex items-center gap-2 text-lg font-extrabold tracking-tight text-foreground select-none">
+          <ShoppingCart className="h-5 w-5 text-amber" /> Your Cart
         </h2>
-        <button 
-          id="cart-close-btn-mobile"
-          onClick={onClose} 
-          className="md:hidden grid h-9 w-9 place-items-center rounded-xl transition-all duration-300 hover:bg-muted"
+        <button
+          id="cart-close-btn"
+          onClick={onClose}
+          className="grid h-9 w-9 place-items-center rounded-xl transition-all duration-300 hover:bg-muted cursor-pointer"
+          aria-label="Close cart"
         >
           <X className="h-5 w-5" />
         </button>
@@ -135,7 +136,7 @@ export function RightCart({
         )}
       </div>
 
-      <div className="rounded-2xl bg-primary p-4 text-primary-foreground shadow-md">
+      <div className="rounded-2xl bg-linear-to-br from-primary-vivid to-primary-vivid-soft p-4 text-primary-foreground shadow-md">
         <div className="flex items-center justify-between py-1 text-sm select-none">
           <span className="font-medium opacity-90">Subtotal</span>
           <span className="font-bold">Rs. {subtotal.toLocaleString()}</span>
@@ -178,29 +179,26 @@ export function RightCart({
   );
 
   return (
-    <>
-      <aside className="hidden md:flex h-full">{content}</aside>
-      <AnimatePresence>
-        {open && (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-50"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
           <motion.div
-            className="fixed inset-0 z-50 md:hidden"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", stiffness: 320, damping: 34 }}
+            className="absolute inset-y-0 right-0 shadow-2xl shadow-black/40"
           >
-            <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-            <motion.div
-              initial={{ x: 340 }}
-              animate={{ x: 0 }}
-              exit={{ x: 340 }}
-              transition={{ type: "tween", duration: 0.25 }}
-              className="absolute inset-y-0 right-0"
-            >
-              {content}
-            </motion.div>
+            {content}
           </motion.div>
-        )}
-      </AnimatePresence>
-    </>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

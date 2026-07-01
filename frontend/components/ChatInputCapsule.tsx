@@ -60,22 +60,29 @@ export function ChatInputCapsule({
     }
   }, [setMessageInput, setIsMicActive]);
 
-  const handleMicToggle = () => {
+  // Press-and-hold STT: transcription runs ONLY while the mic is held down.
+  const startListening = () => {
     if (!recognitionRef.current) {
       alert("Speech recognition is not supported in this browser. Please use Chrome or Edge.");
       return;
     }
-    if (isMicActive) {
-      recognitionRef.current.stop();
-      setIsMicActive(false);
-    } else {
-      try {
-        recognitionRef.current.start();
-        setIsMicActive(true);
-      } catch {
-        // already active
-      }
+    if (isMicActive) return;
+    try {
+      recognitionRef.current.start();
+      setIsMicActive(true);
+    } catch {
+      // already started — ignore
     }
+  };
+
+  const stopListening = () => {
+    if (!recognitionRef.current) return;
+    try {
+      recognitionRef.current.stop();
+    } catch {
+      // not running — ignore
+    }
+    setIsMicActive(false);
   };
 
   // 2. Attach Files & Images
@@ -165,9 +172,13 @@ export function ChatInputCapsule({
           <button
             id="mic-toggle-btn"
             type="button"
-            aria-label="Voice"
-            onClick={handleMicToggle}
-            className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition-all duration-300 ease-in-out hover:scale-105 active:scale-95 cursor-pointer ${
+            aria-label="Hold to talk"
+            title="Hold to talk"
+            onPointerDown={(e) => { e.preventDefault(); startListening(); }}
+            onPointerUp={(e) => { e.preventDefault(); stopListening(); }}
+            onPointerLeave={stopListening}
+            onPointerCancel={stopListening}
+            className={`grid h-9 w-9 shrink-0 touch-none select-none place-items-center rounded-full transition-all duration-300 ease-in-out hover:scale-105 active:scale-95 cursor-pointer ${
               isMicActive
                 ? "bg-red-500/20 text-red-400 hover:bg-red-500/30 animate-pulse"
                 : "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground"

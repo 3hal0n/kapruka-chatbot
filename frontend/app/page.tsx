@@ -2,18 +2,12 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, ShoppingCart, Sun, Moon, AlertCircle, Trash2, Gift } from "lucide-react";
+import { AlertCircle, Gift } from "lucide-react";
 
-import { LeftSidebar, Mode } from "@/components/LeftSidebar";
 import { RightCart, CartItem } from "@/components/RightCart";
 import { GroupGiftModal } from "@/components/GroupGiftModal";
-import { AssistantBubble } from "@/components/AssistantBubble";
-import { UserBubble } from "@/components/UserBubble";
-import { ShoppingContextCard } from "@/components/ShoppingContextCard";
-import { ProductCard, Product, kaprukaBuyUrl } from "@/components/ProductCard";
-import { ChatInputCapsule } from "@/components/ChatInputCapsule";
-import { RukiMascot, MascotState } from "@/components/RukiMascot";
-import { GiftProfile, daysUntil, formatOccasionDate } from "@/data/giftProfiles";
+import { Product, kaprukaBuyUrl } from "@/components/ProductCard";
+import { AnimatedAIChat, Message as ChatMessage } from "@/components/ui/animated-ai-chat";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -31,63 +25,6 @@ interface Message {
   isError?: boolean;
 }
 
-function EmptyStateIllustration({ theme }: { theme: "light" | "dark" }) {
-  return (
-    <svg className="h-20 w-20 mx-auto opacity-75 mb-3" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-      {/* Outer pulsing ring */}
-      <circle cx="50" cy="50" r="40" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 4" className="text-primary/40 animate-[spin_60s_linear_infinite]" />
-      
-      {/* Inner elements: Gift Box & Search glass */}
-      <rect x="35" y="45" width="30" height="25" rx="3" stroke="currentColor" strokeWidth="2" className="text-primary/60" />
-      <path d="M35 52H65" stroke="currentColor" strokeWidth="1.5" className="text-primary/60" />
-      <path d="M50 45V70" stroke="currentColor" strokeWidth="1.5" className="text-primary/60" />
-      
-      {/* Gift ribbon bow */}
-      <path d="M42 45C42 38 48 38 50 45C52 38 58 38 58 45" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-amber" />
-      
-      {/* Magnifying Glass */}
-      <circle cx="68" cy="38" r="12" fill={theme === "dark" ? "#1E0B36" : "#ffffff"} stroke="currentColor" strokeWidth="2" className="text-amber" />
-      <line x1="76.5" y1="46.5" x2="88" y2="58" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="text-amber" />
-      
-      {/* Small accent sparkles */}
-      <path d="M22 28L25 25M25 25L28 28M25 25V31M19 25H31" stroke="currentColor" strokeWidth="1" strokeLinecap="round" className="text-primary/30" />
-      <circle cx="80" cy="20" r="2" fill="currentColor" className="text-amber/50" />
-    </svg>
-  );
-}
-
-const isNoMatchesOrError = (msg: Message): boolean => {
-  if (msg.sender !== "ai") return false;
-  if (msg.isError) return true;
-
-  // Never show the empty-state card on action turns (cart add, checkout, etc.)
-  // These turns have text like "Done! I've added X to your cart." with no products,
-  // which would otherwise incorrectly trigger the empty-state illustration.
-  const intents = msg.intents || [];
-  if (intents.includes("CART_ACTION")) return false;
-  if (intents.includes("LOGISTICS") && !intents.includes("SEARCH")) return false;
-  
-  // If the intent is SEARCH and there are no products
-  if (intents.includes("SEARCH") && (!msg.products || msg.products.length === 0)) {
-    return true;
-  }
-  
-  // Or check if the text states no items matched
-  const text = msg.text.toLowerCase();
-  const noMatchesPhrases = [
-    "couldn't find any products",
-    "no products matching",
-    "no matching products",
-    "contained allergens you avoid",
-    "could not find matching results"
-  ];
-  if (noMatchesPhrases.some(phrase => text.includes(phrase)) && (!msg.products || msg.products.length === 0)) {
-    return true;
-  }
-  
-  return false;
-};
-
 interface FlyingItem {
   id: string;
   image: string;
@@ -98,24 +35,15 @@ interface FlyingItem {
 }
 
 export default function RukiPage() {
-  // ── Navigation
-  const [mode, setMode] = useState<Mode>("Smart Shopping");
+  // ── Navigation & Views
+  const [mode, setMode] = useState<string>("Smart Shopping");
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
 
-  // ── Preferences
+  // ── Preferences (kept for compatibility with backend requests)
   const [budget, setBudget] = useState("");
   const [recipient, setRecipient] = useState("");
   const [occasion, setOccasion] = useState("");
-
-  // ── Occasion Vibe Calendar — currently selected gift profile
-  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
-  // DB UUID of the active profile (sent as profile_id on chat turns), plus a
-  // cache mapping static profile id -> DB UUID so we persist each only once.
-  const [activeProfileDbId, setActiveProfileDbId] = useState<string | null>(null);
-  const profileDbIdCache = useRef<Record<string, string>>({});
-
-  // ── Vibe Check (AI personality analyzer)
   const [vibeCheck, setVibeCheck] = useState("");
 
   // ── Group Gift
@@ -127,14 +55,12 @@ export default function RukiPage() {
   const [flyingItems, setFlyingItems] = useState<FlyingItem[]>([]);
   const giftBoxCanvasRef = useRef<HTMLDivElement>(null);
 
-  // ── Input toggles
+  // ── Input & Voice toggles
   const [language, setLanguage] = useState("English");
-  const [messageInput, setMessageInput] = useState("");
   const [isMicActive, setIsMicActive] = useState(false);
-  const [isCameraActive, setIsCameraActive] = useState(false);
-  const [isAudioActive, setIsAudioActive] = useState(true);
+  const [isAudioActive, setIsAudioActive] = useState(false);
 
-  // ── Theme
+  // ── Theme — pristine Light Mode by default, switches to Dark
   const [theme, setTheme] = useState<"light" | "dark">("light");
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -145,52 +71,100 @@ export default function RukiPage() {
   const userIdRef = useRef<string>("");
   if (!userIdRef.current) userIdRef.current = generateUserId();
 
+  // ── Guest label — derived client-side only after mount so the random
+  // session id never diverges between the server and client render pass.
+  const [guestLabel, setGuestLabel] = useState("Guest");
+  const syncGuestLabel = () => setGuestLabel(`Guest #${userIdRef.current.slice(-4).toUpperCase()}`);
+
   // ── Chat state
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [currentStatus, setCurrentStatus] = useState<string | null>(null);
   const [currentIntents, setCurrentIntents] = useState<string[]>([]);
   const [streamedText, setStreamedText] = useState("");
-  const chatEndRef = useRef<HTMLDivElement>(null);
-  const scrollViewportRef = useRef<HTMLDivElement>(null);
+
+  // ── Chat History Log
+  const [chatHistory, setChatHistory] = useState<{ id: string; title: string; date: string }[]>([]);
 
   // ── Cart state
   const [cart, setCart] = useState<CartItem[]>([]);
   const [deliveryFee, setDeliveryFee] = useState(350);
 
-  // ── Checkout state — no detail collection. Checkout opens the real Kapruka
-  // product pages directly; we never collect address/phone or fabricate links.
+  // ── Speech Transcription Web Speech API
+  const recognitionRef = useRef<any>(null);
 
-  // ── Mascot state
-  const [mascotHappy, setMascotHappy] = useState(false);
-  const prevIsTypingRef = useRef(false);
   useEffect(() => {
-    if (prevIsTypingRef.current && !isTyping && messages.length > 1) {
-      setMascotHappy(true);
-      const t = setTimeout(() => setMascotHappy(false), 2200);
-      return () => clearTimeout(t);
+    if (typeof window !== "undefined") {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        const rec = new SpeechRecognition();
+        rec.continuous = true;
+        rec.interimResults = false;
+        rec.lang = "en-US";
+
+        rec.onresult = (event: any) => {
+          const text = event.results[event.results.length - 1][0].transcript;
+          if (text) {
+            // Append transcribed text
+            const chatInputEl = document.getElementById("chat-input-text") as HTMLTextAreaElement;
+            if (chatInputEl) {
+              const value = chatInputEl.value;
+              chatInputEl.value = (value ? value + " " : "") + text.trim();
+              const event = new Event('input', { bubbles: true });
+              chatInputEl.dispatchEvent(event);
+            }
+          }
+        };
+
+        rec.onerror = () => setIsMicActive(false);
+        rec.onend = () => setIsMicActive(false);
+        recognitionRef.current = rec;
+      }
     }
-    prevIsTypingRef.current = isTyping;
-  }, [isTyping, messages.length]);
+  }, []);
 
-  const mascotState: MascotState = mascotHappy
-    ? "happy"
-    : isTyping
-    ? "thinking"
-    : streamedText.length > 0
-    ? "speaking"
-    : messageInput.length > 0
-    ? "typing"
-    : "idle";
-
-  // ── Memory recall toast
-  const [memoryToast, setMemoryToast] = useState<string | null>(null);
-  const showMemoryToast = (msg: string) => {
-    setMemoryToast(msg);
-    setTimeout(() => setMemoryToast(null), 3500);
+  const handleStartRecording = () => {
+    if (!recognitionRef.current) {
+      alert("Speech recognition is not supported in this browser. Please use Chrome or Edge.");
+      return;
+    }
+    if (isMicActive) return;
+    try {
+      recognitionRef.current.start();
+      setIsMicActive(true);
+    } catch {
+      // already active
+    }
   };
 
-  // ── Speech Output
+  const handleStopRecording = () => {
+    if (!recognitionRef.current) return;
+    try {
+      recognitionRef.current.stop();
+    } catch {
+      // not running
+    }
+    setIsMicActive(false);
+  };
+
+  // ── Load Chat History on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      syncGuestLabel();
+      const storedHistory = localStorage.getItem("ruki_chat_history");
+      if (storedHistory) {
+        setChatHistory(JSON.parse(storedHistory));
+      }
+      
+      // Load current messages — otherwise leave empty so the hero landing view shows
+      const storedMessages = localStorage.getItem(`ruki_chat_messages_${userIdRef.current}`);
+      if (storedMessages) {
+        setMessages(JSON.parse(storedMessages));
+      }
+    }
+  }, []);
+
+  // ── Speech Output (TTS)
   const speakResponse = (text: string) => {
     if (!isAudioActive) return;
     if (typeof window === "undefined" || !window.speechSynthesis) return;
@@ -198,7 +172,7 @@ export default function RukiPage() {
     const cleanText = text.replace(/<<.*?>>/g, "").trim();
     if (!cleanText) return;
     const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = language === "සිංහල" ? "si-LK" : "en-US";
+    utterance.lang = "en-US";
     window.speechSynthesis.speak(utterance);
   };
 
@@ -208,32 +182,7 @@ export default function RukiPage() {
     }
   }, [isAudioActive]);
 
-  // ── Greeting on language change
-  useEffect(() => {
-    const text = language === "සිංහල"
-      ? "Hello! ආයුබෝවන්! මම Ruki AI. ඔබට අවශ්‍ය තෑගි තෝරා ගැනීමට මම ඔබට උදව් කරන්නම්. ඔබ සොයන්නේ කුමක්ද?"
-      : "Hello! ආයුබෝවන්! I am Ruki AI, your personal Kapruka gifting companion...";
-    setMessages([{ id: "initial-greeting", sender: "ai", text }]);
-  }, [language]);
-
-  const scrollToBottom = (behavior: "smooth" | "auto" = "smooth") => {
-    const container = scrollViewportRef.current;
-    if (container) {
-      container.scrollTo({
-        top: container.scrollHeight,
-        behavior
-      });
-    }
-  };
-
-  // ── Autoscroll
-  useEffect(() => {
-    scrollToBottom("smooth");
-    const timer = setTimeout(() => scrollToBottom("smooth"), 150);
-    return () => clearTimeout(timer);
-  }, [messages, streamedText, isTyping, currentStatus]);
-
-  // ── Cart
+  // ── Cart operations
   const handleAddToCart = (product: Product, quantity?: number) => {
     const price = typeof product.price === "object" ? (product.price as any).amount : Number(product.price);
     const id = product.id || (product as any).code || "";
@@ -257,26 +206,27 @@ export default function RukiPage() {
   const delivery = cart.length > 0 ? deliveryFee : 0;
   const total = subtotal + delivery;
 
-  // ── Checkout — open each cart item's real Kapruka product page in a new tab.
-  // No detail collection, no fabricated links: the user completes the purchase
-  // on Kapruka's live site. Triggered by the cart button and by the agent.
   const handleCreateOrderLink = () => {
     if (cart.length === 0) return;
     cart.forEach((item, idx) => {
       const url = item.url || `https://www.kapruka.com/buyonline/${item.name.toLowerCase().replace(/ /g, "-")}/kid/${item.id.toLowerCase()}`;
-      // Stagger slightly so browsers don't block the rapid window.open burst.
       setTimeout(() => window.open(url, "_blank", "noopener,noreferrer"), idx * 120);
     });
   };
 
   // ── Clear history
   const handleClearHistory = async () => {
-    try { await fetch(`${BACKEND_URL}/api/reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userIdRef.current }) }); } catch { /* offline */ }
-    setMessages([{ id: `clear-${Date.now()}`, sender: "ai", text: "History cleared. How can I help you find gifts today?" }]);
+    try { 
+      await fetch(`${BACKEND_URL}/api/reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userIdRef.current }) }); 
+    } catch { /* offline */ }
+    
+    const newMsg: Message = { id: `clear-${Date.now()}`, sender: "ai", text: "History cleared. How can I help you find gifts today?" };
+    setMessages([newMsg]);
+    localStorage.setItem(`ruki_chat_messages_${userIdRef.current}`, JSON.stringify([newMsg]));
     setBudget(""); setRecipient(""); setOccasion(""); setCurrentIntents([]); setCurrentStatus(null);
   };
 
-  // ── Gift Box Builder: fly thumbnail → box canvas, then commit item
+  // ── Gift Box Builder
   const handleAddToBox = (product: Product, sourceRect: DOMRect) => {
     const totalInBox = giftBoxItems.reduce((s, i) => s + i.quantity, 0);
     if (totalInBox >= 5) return;
@@ -309,7 +259,6 @@ export default function RukiPage() {
     }, 580);
   };
 
-  // ── Co-Gift: serialize cart to shareable token via backend
   const handleGroupGift = async () => {
     if (cart.length === 0) return;
     try {
@@ -332,90 +281,28 @@ export default function RukiPage() {
     setIsGroupGiftModalOpen(true);
   };
 
-  // Persist a calendar profile to the backend exactly once, caching its DB UUID.
-  // Converts the static recurring month/day into the next-occurrence date and the
-  // single allergen into the allergies array the API expects.
-  const ensureProfilePersisted = async (profile: GiftProfile) => {
-    const cached = profileDbIdCache.current[profile.id];
-    if (cached) {
-      setActiveProfileDbId(cached);
-      return;
+  // ── Send message via SSE stream
+  const handleSendMessage = async (userText: string) => {
+    if (!userText.trim()) return;
+    setIsTyping(true);
+    // Leave status null so the playful rotating "Ruki is thinking…" indicator
+    // shows; backend status events override it with specific progress text.
+    setCurrentStatus(null);
+
+    const userMsg: Message = { id: `user-${Date.now()}`, sender: "user", text: userText };
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
+    localStorage.setItem(`ruki_chat_messages_${userIdRef.current}`, JSON.stringify(updatedMessages));
+
+    // Handle session history list update
+    if (messages.length <= 1) {
+      const title = userText.length > 25 ? userText.substring(0, 25) + "..." : userText;
+      const date = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      const newItem = { id: userIdRef.current, title, date };
+      const updatedHistory = [newItem, ...chatHistory];
+      setChatHistory(updatedHistory);
+      localStorage.setItem("ruki_chat_history", JSON.stringify(updatedHistory));
     }
-    try {
-      const now = new Date();
-      const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      let year = now.getFullYear();
-      if (new Date(year, profile.month - 1, profile.day) < todayMidnight) year += 1;
-      const targetDate = `${year}-${String(profile.month).padStart(2, "0")}-${String(profile.day).padStart(2, "0")}`;
-
-      const res = await fetch(`${BACKEND_URL}/api/profiles`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userIdRef.current,
-          recipient_name: profile.name,
-          occasion: profile.occasion,
-          target_date: targetDate,
-          vibe_summary: profile.vibeSummary,
-          allergies: profile.allergen ? [profile.allergen] : [],
-        }),
-      });
-      if (!res.ok) return; // DB down / 503 — stay graceful, no profile_id
-      const data = await res.json();
-      if (data?.id) {
-        profileDbIdCache.current[profile.id] = data.id;
-        setActiveProfileDbId(data.id);
-      }
-    } catch {
-      /* offline — proactive greeting + filters still work without the guardrail */
-    }
-  };
-
-  // ── Send message via SSE
-  // ── Occasion Vibe Calendar: clicking a saved gift profile patches the global
-  // filter state and fires a proactive Ruki greeting (a background chat payload
-  // event) so the conversation kicks off with full context.
-  const handleSelectGiftProfile = (profile: GiftProfile) => {
-    // 1. Patch global filters
-    setActiveProfileId(profile.id);
-    setRecipient(profile.name);
-    setOccasion(profile.occasion);
-    setBudget(profile.budget);
-    setVibeCheck(profile.vibeSummary);
-    setLeftOpen(false); // close the mobile drawer if open
-
-    // 1b. Persist the profile to the DB (once) and remember its UUID so that
-    // subsequent chat turns carry profile_id — engaging the backend short-circuit
-    // and the DB-driven allergen guardrail. Best-effort: failures don't block UX.
-    void ensureProfilePersisted(profile);
-
-    // 2. Build Ruki's proactive greeting
-    const days = daysUntil(profile.month, profile.day);
-    const whenText = days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`;
-    const allergenClause = profile.allergen
-      ? ` Last time we checked, they avoid ${profile.allergen}.`
-      : "";
-    const greeting =
-      `Machan, I see ${profile.name}'s ${profile.occasion} is coming up ${whenText} ` +
-      `(${formatOccasionDate(profile.month, profile.day)})!${allergenClause} ` +
-      `Let's pick a great gift around ${profile.budget} — shall I pull up some ` +
-      `${profile.occasion.toLowerCase()} ideas for ${profile.name}?`;
-
-    setMessages(prev => [
-      ...prev,
-      { id: `vibe-${profile.id}-${Date.now()}`, sender: "ai", text: greeting, intents: ["SEARCH"] },
-    ]);
-
-    // 3. Bring the mascot to life
-    setMascotHappy(true);
-    setTimeout(() => setMascotHappy(false), 2200);
-  };
-
-  const handleSendMessage = async () => {
-    if (!messageInput.trim()) return;
-    const userText = messageInput;
-    setMessageInput(""); setIsTyping(true); setCurrentStatus("Analyzing context...");
-    setMessages(prev => [...prev, { id: `user-${Date.now()}`, sender: "user", text: userText }]);
 
     if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
@@ -424,20 +311,47 @@ export default function RukiPage() {
     const ctx: Record<string, any> = {};
     ctx[recipient.toLowerCase() || "default"] = { budget: budget || undefined, occasion: occasion || undefined, location: "Colombo" };
 
+    // Abort the request if the backend stalls (e.g. LLM upstream hangs) so the
+    // user never sits on an endless "thinking" indicator — surface a friendly
+    // error instead. Reset the timer each time a chunk arrives so long but
+    // healthy streams aren't cut off.
+    const controller = new AbortController();
+    const STALL_MS = 45000;
+    let stallTimer = setTimeout(() => controller.abort(), STALL_MS);
+    const bumpStall = () => {
+      clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => controller.abort(), STALL_MS);
+    };
+
     try {
-      const resp = await fetch(`${BACKEND_URL}/api/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userIdRef.current, message: userText, recipient_context: ctx, budget: budget || undefined, recipient: recipient || undefined, occasion: occasion || undefined, vibe_check: vibeCheck.trim() || undefined, profile_id: activeProfileDbId || undefined }) });
+      const resp = await fetch(`${BACKEND_URL}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          user_id: userIdRef.current,
+          message: userText,
+          recipient_context: ctx,
+          budget: budget || undefined,
+          recipient: recipient || undefined,
+          occasion: occasion || undefined,
+          vibe_check: vibeCheck.trim() || undefined
+        })
+      });
       if (!resp.ok || !resp.body) throw new Error("SSE error");
 
-      const reader = resp.body.getReader(); const dec = new TextDecoder("utf-8");
-      // Reset all per-turn accumulators — critical to prevent stale products
-      // from a prior SEARCH turn leaking into a CART_ACTION response.
+      const reader = resp.body.getReader(); 
+      const dec = new TextDecoder("utf-8");
       let buf = "", fullText = "", sseIntents: string[] = [], sseProducts: Product[] = [], sseLatency = 0, hasError = false;
-      let isCartActionTurn = false; // tracks whether this turn is purely an action turn
+      let isCartActionTurn = false;
 
       while (true) {
-        const { value, done } = await reader.read(); if (done) break;
+        const { value, done } = await reader.read();
+        if (done) break;
+        bumpStall();
         buf += dec.decode(value, { stream: true });
-        const parts = buf.split("\n\n"); buf = parts.pop() || "";
+        const parts = buf.split("\n\n"); 
+        buf = parts.pop() || "";
         for (const part of parts) {
           if (!part.trim()) continue;
           let ev = "", dv = "";
@@ -451,21 +365,17 @@ export default function RukiPage() {
             if (ev === "intent_badge") {
               sseIntents = p.intents || [];
               setCurrentIntents(sseIntents);
-              // Mark this as a pure action turn so we suppress carousel render
               isCartActionTurn = sseIntents.includes("CART_ACTION") && !sseIntents.includes("SEARCH");
             }
             else if (ev === "status") {
               setCurrentStatus(p.message || "");
-              // Show a memory toast when preferences are being saved
-              if (p.code === "PREF_SAVING" && p.message) {
-                showMemoryToast("✓ Remembered your preferences!");
-              }
             }
-            else if (ev === "text") { setIsTyping(false); fullText += p.text || ""; setStreamedText(fullText); }
+            else if (ev === "text") { 
+              setIsTyping(false); 
+              fullText += p.text || ""; 
+              setStreamedText(fullText); 
+            }
             else if (ev === "product_carousel") {
-              // Only accumulate carousel products on SEARCH turns.
-              // On CART_ACTION turns the backend never yields <<PRODUCTS>>,
-              // but guard here too in case of unexpected ordering.
               if (!isCartActionTurn && (p.type === "[PRODUCT_CAROUSEL_DATA]" || p.products)) {
                 sseProducts = p.products || [];
               }
@@ -476,11 +386,8 @@ export default function RukiPage() {
                 handleAddToCart(prod);
               });
               if (p.trigger_checkout) {
-                // Open the real Kapruka product pages after the cart settles.
                 setTimeout(() => { handleCreateOrderLink(); }, 400);
               }
-              // A cart_update payload is an action frame — clear status spinner
-              // immediately so the UI doesn't sit on "Analyzing context..."
               setCurrentStatus(null);
               setIsTyping(false);
             }
@@ -490,263 +397,222 @@ export default function RukiPage() {
         }
       }
       const aiText = fullText || (hasError ? "A stream error occurred while fetching catalog items." : "I searched Kapruka but couldn't find matching results.");
-      // On CART_ACTION turns: never attach products (they were added to cart, not shown as carousel)
       const productsToAttach = isCartActionTurn ? undefined : (sseProducts.length > 0 ? sseProducts : undefined);
-      setMessages(prev => [...prev, { id: `ai-${Date.now()}`, sender: "ai", text: aiText, intents: sseIntents, products: productsToAttach, latency: sseLatency, isError: hasError }]);
+      
+      const newAiMsg: Message = { id: `ai-${Date.now()}`, sender: "ai", text: aiText, intents: sseIntents, products: productsToAttach, latency: sseLatency, isError: hasError };
+      const finalizedMessages = [...updatedMessages, newAiMsg];
+      setMessages(finalizedMessages);
+      localStorage.setItem(`ruki_chat_messages_${userIdRef.current}`, JSON.stringify(finalizedMessages));
       speakResponse(aiText);
-    } catch {
-      // Offline fallback — no mock products shown
+    } catch (err) {
+      const stalled = err instanceof DOMException && err.name === "AbortError";
       const isLogistics = /deliver|colombo|kandy/i.test(userText);
-      const text = isLogistics ? "Aney, yes! Kapruka delivers next-day. Standard shipping is LKR 350 to Colombo, Kandy, and surrounding districts." : "The backend is currently offline. Please ensure the FastAPI server is running and try again.";
-      setMessages(prev => [...prev, { id: `sim-${Date.now()}`, sender: "ai", text, intents: isLogistics ? ["LOGISTICS"] : ["SEARCH"], latency: 0, isError: true }]);
+      const text = stalled
+        ? "Aiyo, Ruki is taking too long to respond right now 😅 — the AI service may be busy or unavailable. Please try again in a moment."
+        : isLogistics
+        ? "Aney, yes! Kapruka delivers next-day. Standard shipping is LKR 350 to Colombo, Kandy, and surrounding districts."
+        : "The backend is currently offline. Please ensure the FastAPI server is running and try again.";
+
+      const offlineMsg: Message = { id: `sim-${Date.now()}`, sender: "ai", text, intents: isLogistics && !stalled ? ["LOGISTICS"] : ["SEARCH"], latency: 0, isError: true };
+      const finalizedMessages = [...updatedMessages, offlineMsg];
+      setMessages(finalizedMessages);
+      localStorage.setItem(`ruki_chat_messages_${userIdRef.current}`, JSON.stringify(finalizedMessages));
       speakResponse(text);
+    } finally {
+      clearTimeout(stallTimer);
     }
     setStreamedText(""); setCurrentStatus(null); setCurrentIntents([]); setIsTyping(false);
   };
 
+  const handleSelectHistoryItem = (id: string) => {
+    userIdRef.current = id;
+    syncGuestLabel();
+    const stored = localStorage.getItem(`ruki_chat_messages_${id}`);
+    if (stored) {
+      setMessages(JSON.parse(stored));
+    } else {
+      setMessages([{ id: "initial-greeting", sender: "ai", text: "Welcome back! How can I help today?" }]);
+    }
+    setLeftOpen(false);
+  };
+
+  const handleStartNewChat = () => {
+    userIdRef.current = generateUserId();
+    syncGuestLabel();
+    setMessages([]);
+    setIsTyping(false);
+    setCurrentStatus(null);
+    setCurrentIntents([]);
+    setStreamedText("");
+    localStorage.removeItem(`ruki_chat_messages_${userIdRef.current}`);
+  };
+
+  // Convert Message array to ChatMessage format for AnimatedAIChat
+  const chatMessages: ChatMessage[] = messages.map(m => ({
+    id: m.id,
+    role: m.sender === "user" ? "user" : "assistant",
+    content: m.text,
+    timestamp: new Date(),
+    products: m.products,
+    latency: m.latency,
+    isError: m.isError,
+    intents: m.intents
+  }));
+
+  // Append streamed text if present
+  if (streamedText) {
+    chatMessages.push({
+      id: "streaming-text",
+      role: "assistant",
+      content: streamedText,
+      timestamp: new Date()
+    });
+  }
+
+  // If typing but not streaming text, show the animated "thinking" indicator.
+  // Pass through a specific backend status if present; otherwise leave content
+  // empty so the indicator cycles its playful phrases.
+  if (isTyping && !streamedText) {
+    chatMessages.push({
+      id: "typing-indicator-msg",
+      role: "assistant",
+      content: currentStatus || "",
+      timestamp: new Date(),
+      intents: ["THINKING"]
+    });
+  }
+
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground antialiased font-sans">
-
-      {/* Main Top Header (Purple/Blue like Kapruka, always visible, replaces text branding with logo) */}
-      <header className="flex h-16 w-full items-center justify-between border-b border-white/10 bg-[#3c1b63] text-white px-4 md:px-6 shrink-0 z-40 select-none">
-        <div className="flex items-center gap-3">
-          <button id="sidebar-toggle-btn-mobile" onClick={() => setLeftOpen(true)} className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer md:hidden" aria-label="Open menu">
-            <Menu className="h-5 w-5" />
-          </button>
-          <img src="/ruki.svg" alt="Kapruka Logo" className="h-10 w-auto object-contain select-none" />
-        </div>
-        <div className="flex items-center gap-1">
-          <button
-            id="clear-history-btn"
-            onClick={handleClearHistory}
-            className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer"
-            aria-label="Clear history"
-            title="Clear history"
+      {/* Gift Box Canvas for Gift Box Builder Mode */}
+      <AnimatePresence>
+        {mode === "Gift Box Builder" && (
+          <motion.div
+            ref={giftBoxCanvasRef}
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.25, ease: "easeInOut" }}
+            className="shrink-0 overflow-hidden border-b border-border bg-linear-to-r from-primary/5 to-amber/5 px-4 py-3 z-30"
           >
-            <Trash2 className="h-4 w-4" />
-          </button>
-          <button id="theme-toggle-btn-header" onClick={toggleTheme} className="grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer" aria-label="Toggle theme">
-            {theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-          </button>
-          <button id="cart-toggle-btn-header" onClick={() => setRightOpen(true)} className="relative grid h-10 w-10 place-items-center rounded-xl text-white hover:bg-white/10 cursor-pointer" aria-label="Open cart">
-            <ShoppingCart className="h-5 w-5" />
-            {cart.length > 0 && <span className="absolute -right-0.5 -top-0.5 grid h-5 w-5 place-items-center rounded-full bg-amber text-[10px] font-bold text-amber-foreground animate-pulse">{cart.reduce((s, i) => s + i.quantity, 0)}</span>}
-          </button>
-        </div>
-      </header>
+            <div className="flex items-center justify-between mb-2.5">
+              <div className="flex items-center gap-2">
+                <Gift className="h-4 w-4 text-amber" />
+                <span className="text-sm font-black tracking-tight text-foreground">Gift Box</span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold select-none ${giftBoxItems.reduce((s, i) => s + i.quantity, 0) >= 5 ? "bg-amber text-amber-foreground" : "bg-primary/10 text-primary"}`}>
+                  {giftBoxItems.reduce((s, i) => s + i.quantity, 0)}/5 items
+                </span>
+              </div>
+              {giftBoxItems.length > 0 && (
+                <button
+                  onClick={() => setGiftBoxItems([])}
+                  className="text-[11px] font-bold text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
 
-      {/* Main content layout below header */}
-      <div className="flex flex-1 overflow-hidden">
-        <LeftSidebar mode={mode} setMode={setMode} budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} open={leftOpen} onClose={() => setLeftOpen(false)} theme={theme} toggleTheme={toggleTheme} vibeCheck={vibeCheck} setVibeCheck={setVibeCheck} onSelectProfile={handleSelectGiftProfile} activeProfileId={activeProfileId} />
-
-        {/* Center workspace */}
-        <main className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex flex-1 flex-col overflow-hidden p-3 md:p-6">
-            <div className="relative flex flex-col h-full overflow-hidden rounded-2xl border border-border bg-surface shadow-2xl shadow-purple-950/50">
-
-              {/* ── Gift Box Canvas (visible only in Gift Box Builder mode) ── */}
-              <AnimatePresence>
-                {mode === "Gift Box Builder" && (
+            <div className="flex gap-2">
+              {[0, 1, 2, 3, 4].map(slot => {
+                const item = giftBoxItems[slot];
+                return (
                   <motion.div
-                    ref={giftBoxCanvasRef}
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.25, ease: "easeInOut" }}
-                    className="shrink-0 overflow-hidden border-b border-border bg-linear-to-r from-primary/5 to-amber/5 px-4 py-3"
+                    key={slot}
+                    animate={item ? { scale: [1.18, 1] } : { scale: 1 }}
+                    transition={{ type: "spring", stiffness: 380, damping: 22 }}
+                    className={`relative flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border-2 transition-all duration-300 ${
+                      item
+                        ? "border-primary/60 bg-surface shadow-sm"
+                        : "border-dashed border-border bg-muted/20"
+                    }`}
                   >
-                    <div className="flex items-center justify-between mb-2.5">
-                      <div className="flex items-center gap-2">
-                        <Gift className="h-4 w-4 text-amber" />
-                        <span className="text-sm font-black tracking-tight text-foreground">Gift Box</span>
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold select-none ${giftBoxItems.reduce((s, i) => s + i.quantity, 0) >= 5 ? "bg-amber text-amber-foreground" : "bg-primary/10 text-primary"}`}>
-                          {giftBoxItems.reduce((s, i) => s + i.quantity, 0)}/5 items
-                        </span>
-                      </div>
-                      {giftBoxItems.length > 0 && (
-                        <button
-                          onClick={() => setGiftBoxItems([])}
-                          className="text-[11px] font-bold text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </div>
-
-                    {/* 5-slot grid */}
-                    <div className="flex gap-2">
-                      {[0, 1, 2, 3, 4].map(slot => {
-                        const item = giftBoxItems[slot];
-                        return (
-                          <motion.div
-                            key={slot}
-                            animate={item ? { scale: [1.18, 1] } : { scale: 1 }}
-                            transition={{ type: "spring", stiffness: 380, damping: 22 }}
-                            className={`relative flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border-2 transition-all duration-300 ${
-                              item
-                                ? "border-primary/60 bg-surface shadow-sm"
-                                : "border-dashed border-border bg-muted/20"
-                            }`}
-                          >
-                            {item ? (
-                              <>
-                                <img
-                                  src={item.image_url}
-                                  alt={item.name}
-                                  className="h-full w-full rounded-[10px] object-cover"
-                                />
-                                {item.quantity > 1 && (
-                                  <span className="absolute -right-1.5 -top-1.5 grid h-4 w-4 place-items-center rounded-full bg-primary text-[9px] font-black text-primary-foreground shadow">
-                                    {item.quantity}
-                                  </span>
-                                )}
-                              </>
-                            ) : (
-                              <span className="text-lg select-none opacity-30">🎁</span>
-                            )}
-                          </motion.div>
-                        );
-                      })}
-                    </div>
-
-                    {giftBoxItems.reduce((s, i) => s + i.quantity, 0) >= 5 && (
-                      <motion.p
-                        initial={{ opacity: 0, y: 4 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="mt-2 text-[11px] font-bold text-amber"
-                      >
-                        Box is full!{" "}
-                        <button
-                          onClick={handleCreateOrderLink}
-                          className="underline underline-offset-2 cursor-pointer hover:text-amber/80 transition-colors"
-                        >
-                          Checkout now →
-                        </button>
-                      </motion.p>
+                    {item ? (
+                      <>
+                        <img
+                          src={item.image_url}
+                          alt={item.name}
+                          className="h-full w-full rounded-[10px] object-cover"
+                        />
+                        {item.quantity > 1 && (
+                          <span className="absolute -right-1.5 -top-1.5 grid h-4 w-4 place-items-center rounded-full bg-primary text-[9px] font-black text-primary-foreground shadow">
+                            {item.quantity}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-lg select-none opacity-30">🎁</span>
                     )}
                   </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Chat thread */}
-              <div ref={scrollViewportRef} className="scroll-slim flex-1 overflow-y-auto h-full space-y-5 px-4 pb-24 pt-6 md:px-6 md:pb-24 md:pt-6">
-                {messages.map((msg, i) => (
-                  <div key={msg.id || i} className="space-y-4">
-                    {msg.sender === "ai" ? <AssistantBubble intents={msg.intents} latency={msg.latency}>{msg.text}</AssistantBubble> : <UserBubble>{msg.text}</UserBubble>}
-                    
-                    {msg.products && msg.products.length > 0 && (
-                      <motion.div initial="hidden" animate="show" variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08 } } }} className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                        {msg.products.map(p => (
-                          <ProductCard
-                            key={p.id}
-                            product={p}
-                            onAdd={() => handleAddToCart(p)}
-                            mode={mode}
-                            onAddToBox={(prod, rect) => handleAddToBox(prod, rect)}
-                          />
-                        ))}
-                      </motion.div>
-                    )}
-
-                    {/* High-contrast inline alert card or empty search state illustration */}
-                    {isNoMatchesOrError(msg) && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className={`overflow-hidden rounded-2xl border p-6 text-center shadow-md max-w-[85%] mr-auto ${
-                          msg.isError
-                            ? "border-rose-500/30 bg-rose-500/5 text-foreground"
-                            : "border-border bg-surface text-foreground"
-                        }`}
-                      >
-                        {msg.isError ? (
-                          <div className="flex flex-col items-center gap-3">
-                            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-rose-500/20 text-rose-500 animate-pulse">
-                              <AlertCircle className="h-6 w-6" />
-                            </div>
-                            <div>
-                              <h4 className="text-base font-extrabold tracking-tight text-rose-500 uppercase">
-                                Service Error
-                              </h4>
-                              <p className="mt-1.5 text-sm font-medium leading-relaxed text-muted-foreground">
-                                The Kapruka Ruki AI service encountered an error or the streaming backend is currently offline. 
-                                Under no circumstances will we show fallback cached/mock items. Please verify your connection or try again.
-                              </p>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center">
-                            <EmptyStateIllustration theme={theme} />
-                            <h4 className="text-base font-extrabold tracking-tight text-primary uppercase select-none">
-                              No matching products found
-                            </h4>
-                            <p className="mt-2 max-w-md text-xs font-semibold leading-relaxed text-muted-foreground">
-                              Ruki AI searched the live Kapruka catalog but found no matching items for your search. 
-                              We have completely disabled fallback mock products to guarantee you only see real-time availability.
-                            </p>
-                            <button
-                              onClick={() => setMessageInput("Show me general popular gift items")}
-                              className="mt-4 rounded-xl border border-border bg-muted/50 px-4 py-2 text-xs font-bold transition-all duration-300 hover:bg-muted cursor-pointer"
-                            >
-                              Try another query
-                            </button>
-                          </div>
-                        )}
-                      </motion.div>
-                    )}
-                  </div>
-                ))}
-
-                {streamedText && <AssistantBubble>{streamedText}</AssistantBubble>}
-
-                {messages.length <= 1 && !isTyping && (
-                  <ShoppingContextCard budget={budget} setBudget={setBudget} recipient={recipient} setRecipient={setRecipient} occasion={occasion} setOccasion={setOccasion} onContextUpdated={(type, val) => setMessages(prev => [...prev, { id: `sys-${Date.now()}`, sender: "ai", text: `Context updated: ${type.toUpperCase()} set to "${val}".` }])} theme={theme} />
-                )}
-
-                <AnimatePresence mode="wait">
-                  {(isTyping || currentStatus) && (
-                    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} transition={{ duration: 0.2 }} className="flex items-center gap-3 bg-muted border border-border px-4 py-2.5 rounded-full shadow-sm w-fit select-none">
-                      <div className="flex space-x-1.5">
-                        {[0, 150, 300].map(d => <span key={d} className="h-2 w-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: `${d}ms` }} />)}
-                      </div>
-                      {currentStatus && <span className="text-xs font-semibold text-muted-foreground">{currentStatus}</span>}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                <div ref={chatEndRef} />
-              </div>
-
-              {/* Ruki Mascot — floats above the input capsule */}
-              <div className="absolute bottom-18 right-4 z-10 pointer-events-auto">
-                <RukiMascot state={mascotState} />
-              </div>
-
-              <ChatInputCapsule messageInput={messageInput} setMessageInput={setMessageInput} isMicActive={isMicActive} setIsMicActive={setIsMicActive} isCameraActive={isCameraActive} setIsCameraActive={setIsCameraActive} isAudioActive={isAudioActive} setIsAudioActive={setIsAudioActive} onSend={handleSendMessage} />
+                );
+              })}
             </div>
-          </div>
-        </main>
 
-        <RightCart cart={cart} subtotal={subtotal} delivery={delivery} total={total} updateQuantity={updateQuantity} handleCreateOrderLink={handleCreateOrderLink} open={rightOpen} onClose={() => setRightOpen(false)} onGroupGift={handleGroupGift} />
-      </div>
-
-      {(leftOpen || rightOpen) && <div onClick={() => { setLeftOpen(false); setRightOpen(false); }} className="fixed inset-0 z-30 bg-black/40 backdrop-blur-xs md:hidden" />}
-
-      {/* Memory recall toast */}
-      <AnimatePresence>
-        {memoryToast && (
-          <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.95 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 10, scale: 0.95 }}
-            className="fixed bottom-28 left-1/2 -translate-x-1/2 z-50 bg-primary text-primary-foreground px-4 py-2 rounded-full text-xs font-bold shadow-lg select-none"
-          >
-            {memoryToast}
+            {giftBoxItems.reduce((s, i) => s + i.quantity, 0) >= 5 && (
+              <motion.p
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-2 text-[11px] font-bold text-amber"
+              >
+                Box is full!{" "}
+                <button
+                  onClick={handleCreateOrderLink}
+                  className="underline underline-offset-2 cursor-pointer hover:text-amber/80 transition-colors"
+                >
+                  Checkout now →
+                </button>
+              </motion.p>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
 
-      <GroupGiftModal open={isGroupGiftModalOpen} onClose={() => setIsGroupGiftModalOpen(false)} shareUrl={groupGiftLink} cart={cart} total={total} />
+      {/* Main Conversation Layout */}
+      <div className="flex-1 overflow-hidden relative">
+        <AnimatedAIChat
+          messages={chatMessages}
+          onSendMessage={handleSendMessage}
+          isRecording={isMicActive}
+          onStartRecording={handleStartRecording}
+          onStopRecording={handleStopRecording}
+          isAudioMuted={!isAudioActive}
+          onToggleMute={() => setIsAudioActive(!isAudioActive)}
+          sidebarOpen={leftOpen}
+          onToggleSidebar={() => setLeftOpen(!leftOpen)}
+          chatHistory={chatHistory}
+          onSelectHistoryItem={handleSelectHistoryItem}
+          onStartNewChat={handleStartNewChat}
+          guestId={guestLabel}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          onClearHistory={handleClearHistory}
+          onToggleCart={() => setRightOpen(true)}
+          cartCount={cart.reduce((s, i) => s + i.quantity, 0)}
+          onAddToCart={handleAddToCart}
+          onAddToBox={mode === "Gift Box Builder" ? handleAddToBox : undefined}
+          activeMode={mode}
+        />
+      </div>
+
+      <RightCart 
+        cart={cart} 
+        subtotal={subtotal} 
+        delivery={delivery} 
+        total={total} 
+        updateQuantity={updateQuantity} 
+        handleCreateOrderLink={handleCreateOrderLink} 
+        open={rightOpen} 
+        onClose={() => setRightOpen(false)} 
+        onGroupGift={handleGroupGift} 
+      />
+
+      <GroupGiftModal 
+        open={isGroupGiftModalOpen} 
+        onClose={() => setIsGroupGiftModalOpen(false)} 
+        shareUrl={groupGiftLink} 
+        cart={cart} 
+        total={total} 
+      />
 
       {/* Flying thumbnail animations for Gift Box Builder */}
       {flyingItems.map(item => (
@@ -762,7 +628,6 @@ export default function RukiPage() {
           transition={{ duration: 0.55, ease: [0.25, 0.46, 0.45, 0.94] }}
         />
       ))}
-
     </div>
   );
 }
