@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { OccasionCalendar } from "@/components/OccasionCalendar";
 import { GiftProfile } from "@/data/giftProfiles";
+import { RukiLogo } from "@/components/ui/logo";
 
 export type Mode =
   | "Smart Shopping"
@@ -80,7 +81,7 @@ export function LeftSidebar({
     <div className="flex h-full w-[300px] max-w-[86vw] shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-background/95 backdrop-blur-xl p-4 select-none">
       <div className="flex items-center justify-between">
         <h2 className="flex items-center gap-2 text-base font-extrabold tracking-tight text-foreground">
-          <Compass className="h-4 w-4 text-amber" /> Workspace
+          <RukiLogo className="h-8 w-8 shrink-0" /> Workspace
         </h2>
         <button
           id="sidebar-close-btn"

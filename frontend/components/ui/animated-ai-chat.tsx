@@ -28,6 +28,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { ProductCard, Product } from "@/components/ProductCard";
 import { KaprukaSmileGlow } from "@/components/ui/kapruka-smile-glow";
+import { RukiLogo } from "@/components/ui/logo";
 
 export interface Message {
   id: string;
@@ -318,9 +319,7 @@ export function AnimatedAIChat({
     <div className="flex h-full flex-col gap-1 overflow-hidden select-none">
       {/* Brand row */}
       <div className={`flex h-16 shrink-0 items-center gap-2 px-4 ${collapsed ? "justify-center px-2" : ""}`}>
-        <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-linear-to-br from-primary-vivid to-primary-vivid-soft text-sm font-black text-primary-foreground">
-          R
-        </span>
+        <RukiLogo className="h-8 w-8 shrink-0" />
         {!collapsed && (
           <span className="flex min-w-0 flex-1 items-baseline gap-1.5 overflow-hidden">
             <span className="text-base font-black tracking-tight text-foreground">Ruki</span>
