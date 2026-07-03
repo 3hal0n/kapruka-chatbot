@@ -640,7 +640,7 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
     ) + (
         f"{context_block}\n" if context_block else ""
     ) + (
-        f"Recipients: {', '.join(str(r) for r in recipients) if recipients else 'someone special'}\n"
+        f"Recipients: {', '.join(str(r) for r in recipients) if recipients else 'yourself (no recipient named — treat as everyday self-shopping, not a gift)'}\n"
         f"Search: {search_query}\n\n"
         f"Matching products:\n" + "\n".join(product_lines)
     )

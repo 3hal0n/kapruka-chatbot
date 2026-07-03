@@ -47,6 +47,17 @@ def is_mock_mode() -> bool:
     return not api_key or api_key in ("your_gemini_api_key", "")
 
 
+def _use_vertex_express() -> bool:
+    """True when GOOGLE_GENAI_USE_VERTEXAI opts into Vertex AI Express Mode.
+
+    Express Mode authenticates with the same GEMINI_API_KEY (no ADC/service
+    account needed) but must set vertexai=True on the client so requests route
+    through the Vertex endpoint instead of the plain AI-Studio endpoint. Keys
+    minted from a Vertex-linked project (format "AQ.xxx...") only work this way.
+    """
+    return os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").strip().lower() in ("1", "true", "yes")
+
+
 _client_instance = None
 
 def _get_client() -> genai.Client:
@@ -58,6 +69,8 @@ def _get_client() -> genai.Client:
             raise RuntimeError("GEMINI_API_KEY is not set in .env")
 
         client_kwargs = {"api_key": api_key}
+        if _use_vertex_express():
+            client_kwargs["vertexai"] = True
         # On Windows, httpx's default dual-stack connect stalls ~20s on the
         # endpoint's IPv6 address before falling back to IPv4, and the SDK's
         # internal retries stack that into a 40s+ hang — even though `curl` and

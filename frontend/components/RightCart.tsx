@@ -10,6 +10,7 @@ import {
   PackageOpen,
   Loader2,
   Users,
+  Trash2,
 } from "lucide-react";
 
 export interface CartItem {
@@ -19,6 +20,7 @@ export interface CartItem {
   image_url: string;
   quantity: number;
   url?: string; // real Kapruka product-page URL for direct checkout
+  description?: string; // short category/spec line shown under the name
 }
 
 interface RightCartProps {
@@ -27,7 +29,8 @@ interface RightCartProps {
   delivery: number;
   total: number;
   updateQuantity: (id: string, delta: number) => void;
-  handleCreateOrderLink: () => void;
+  onRemoveItem: (id: string) => void;
+  onCheckout: () => void;
   open: boolean;
   onClose: () => void;
   isOrderLoading?: boolean;
@@ -40,7 +43,8 @@ export function RightCart({
   delivery,
   total,
   updateQuantity,
-  handleCreateOrderLink,
+  onRemoveItem,
+  onCheckout,
   open,
   onClose,
   isOrderLoading = false,
@@ -107,7 +111,21 @@ export function RightCart({
                 />
                 <div className="flex min-w-0 flex-1 flex-col justify-between">
                   <div className="min-w-0">
-                    <h3 className="truncate text-sm font-extrabold">{item.name}</h3>
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="truncate text-sm font-extrabold">{item.name}</h3>
+                      <button
+                        id={`cart-remove-${item.id.toLowerCase().replace(/_/g, "-")}`}
+                        onClick={() => onRemoveItem(item.id)}
+                        className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-500 cursor-pointer"
+                        aria-label={`Remove ${item.name} from cart`}
+                        title="Remove item"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    {item.description && (
+                      <p className="truncate text-[11px] font-medium text-muted-foreground">{item.description}</p>
+                    )}
                     <p className="text-xs font-bold text-primary">Rs. {item.price.toLocaleString()}</p>
                   </div>
                   <div className="mt-1 flex items-center gap-1.5">
@@ -136,25 +154,25 @@ export function RightCart({
         )}
       </div>
 
-      <div className="rounded-2xl bg-linear-to-br from-primary-vivid to-primary-vivid-soft p-4 text-primary-foreground shadow-md">
-        <div className="flex items-center justify-between py-1 text-sm select-none">
-          <span className="font-medium opacity-90">Subtotal</span>
-          <span className="font-bold">Rs. {subtotal.toLocaleString()}</span>
+      <div className="rounded-2xl border border-border bg-surface p-4 shadow-sm">
+        <div className="flex items-center justify-between py-1 text-sm text-muted-foreground select-none">
+          <span className="font-medium">Subtotal</span>
+          <span className="font-bold text-foreground">Rs. {subtotal.toLocaleString()}</span>
         </div>
-        <div className="flex items-center justify-between py-1 text-sm select-none">
-          <span className="font-medium opacity-90">Delivery</span>
-          <span className="font-bold">Rs. {delivery.toLocaleString()}</span>
+        <div className="flex items-center justify-between py-1 text-sm text-muted-foreground select-none">
+          <span className="font-medium">Delivery</span>
+          <span className="font-bold text-foreground">Rs. {delivery.toLocaleString()}</span>
         </div>
-        <div className="my-3 h-px bg-white/20" />
+        <div className="my-3 h-px bg-border" />
         <div className="flex items-baseline justify-between select-none">
-          <span className="text-xl font-extrabold tracking-tight">Total</span>
-          <span className="text-xl font-extrabold">Rs. {total.toLocaleString()}</span>
+          <span className="text-xl font-extrabold tracking-tight text-foreground">Total</span>
+          <span className="text-xl font-extrabold text-primary">Rs. {total.toLocaleString()}</span>
         </div>
         <button
           id="create-order-link-btn"
-          onClick={handleCreateOrderLink}
+          onClick={onCheckout}
           disabled={cart.length === 0 || isOrderLoading}
-          className="mt-4 w-full rounded-xl py-3 text-sm font-black shadow-sm transition-all duration-300 ease-in-out hover:brightness-110 hover:shadow-[0_0_24px_rgba(255,215,0,0.5)] active:scale-[0.98] disabled:opacity-60 cursor-pointer inline-flex items-center justify-center gap-2"
+          className="mt-4 w-full rounded-xl py-3 text-sm font-black shadow-sm transition-all duration-300 ease-in-out hover:brightness-105 active:scale-[0.98] disabled:opacity-60 cursor-pointer inline-flex items-center justify-center gap-2"
           style={{ backgroundColor: "#FFD700", color: "#0B0410" }}
         >
           {isOrderLoading ? (
@@ -169,7 +187,7 @@ export function RightCart({
           id="group-gift-btn"
           onClick={onGroupGift}
           disabled={cart.length === 0}
-          className="mt-2 w-full rounded-xl py-2.5 text-sm font-bold inline-flex items-center justify-center gap-2 border border-white/20 bg-white/10 text-white transition-all duration-300 hover:bg-white/20 active:scale-[0.98] disabled:opacity-40 cursor-pointer"
+          className="mt-2 w-full rounded-xl py-2.5 text-sm font-bold inline-flex items-center justify-center gap-2 border border-border bg-background text-foreground transition-all duration-300 hover:bg-muted active:scale-[0.98] disabled:opacity-40 cursor-pointer"
         >
           <Users className="h-4 w-4" />
           Split with Friends

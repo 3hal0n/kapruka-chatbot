@@ -6,6 +6,7 @@ import { Gift, Camera, PersonStanding } from "lucide-react";
 
 import { RightCart, CartItem } from "@/components/RightCart";
 import { GroupGiftModal } from "@/components/GroupGiftModal";
+import { CheckoutModal, CheckoutDetails, CheckoutResult, CheckoutPrefill } from "@/components/CheckoutModal";
 import { Product, kaprukaBuyUrl } from "@/components/ProductCard";
 import { AnimatedAIChat, Message as ChatMessage } from "@/components/ui/animated-ai-chat";
 import { AccessibilityLayer } from "@/components/AccessibilityLayer";
@@ -56,6 +57,11 @@ export default function RukiPage() {
   // ── Group Gift
   const [isGroupGiftModalOpen, setIsGroupGiftModalOpen] = useState(false);
   const [groupGiftLink, setGroupGiftLink] = useState("");
+
+  // ── Checkout (real order creation via /api/order)
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [checkoutPrefill, setCheckoutPrefill] = useState<CheckoutPrefill | undefined>(undefined);
+  const [checkoutAutoResult, setCheckoutAutoResult] = useState<CheckoutResult | undefined>(undefined);
 
   // ── Gift Box Builder
   const [giftBoxItems, setGiftBoxItems] = useState<CartItem[]>([]);
@@ -263,18 +269,28 @@ export default function RukiPage() {
   }, [isAudioActive, accessibilityOpen]);
 
   // ── Cart operations
-  const handleAddToCart = (product: Product, quantity?: number) => {
+  // Pure merge so the SSE cart_update handler can compute a reliable snapshot
+  // synchronously (React state updates are async/batched, so reading `cart`
+  // right after calling setCart would see the stale pre-update value).
+  const mergeProductIntoCart = (list: CartItem[], product: Product, quantity?: number): CartItem[] => {
     const price = typeof product.price === "object" ? (product.price as any).amount : Number(product.price);
     const id = product.id || (product as any).code || "";
     const qtyToAdd = quantity !== undefined ? quantity : (product as any).quantity || 1;
+    const description = product.specs || product.category || product.summary || "";
+    const hit = list.find(i => i.id === id);
+    if (hit) return list.map(i => i.id === id ? { ...i, quantity: i.quantity + qtyToAdd } : i);
+    return [...list, { id, name: product.name, price, image_url: product.image_url || product.image || "", quantity: qtyToAdd, url: kaprukaBuyUrl(product), description }];
+  };
+
+  const handleAddToCart = (product: Product, quantity?: number) => {
     setCart(prev => {
-      const hit = prev.find(i => i.id === id);
-      if (hit) return prev.map(i => i.id === id ? { ...i, quantity: i.quantity + qtyToAdd } : i);
-      if (prev.length === 0) {
+      const wasEmpty = prev.length === 0;
+      const next = mergeProductIntoCart(prev, product, quantity);
+      if (wasEmpty && next.length > 0) {
         fetch(`${BACKEND_URL}/api/delivery?city=Colombo`)
           .then(r => r.json()).then(d => { if (d.fee) setDeliveryFee(d.fee); }).catch(() => {});
       }
-      return [...prev, { id, name: product.name, price, image_url: product.image_url || product.image || "", quantity: qtyToAdd, url: kaprukaBuyUrl(product) }];
+      return next;
     });
     if (window.innerWidth < 768) setRightOpen(true);
   };
@@ -282,16 +298,54 @@ export default function RukiPage() {
   const updateQuantity = (id: string, delta: number) =>
     setCart(prev => prev.map(i => i.id === id ? { ...i, quantity: i.quantity + delta } : i).filter(i => i.quantity > 0));
 
+  const handleRemoveFromCart = (id: string) =>
+    setCart(prev => prev.filter(i => i.id !== id));
+
   const subtotal = cart.reduce((s, i) => s + i.price * i.quantity, 0);
   const delivery = cart.length > 0 ? deliveryFee : 0;
   const total = subtotal + delivery;
 
-  const handleCreateOrderLink = () => {
+  // Escape hatch: open each cart item's real Kapruka product page directly,
+  // for when the user would rather complete checkout on Kapruka's own site.
+  const handleOpenProductPages = () => {
     if (cart.length === 0) return;
     cart.forEach((item, idx) => {
       const url = item.url || `https://www.kapruka.com/buyonline/${item.name.toLowerCase().replace(/ /g, "-")}/kid/${item.id.toLowerCase()}`;
       setTimeout(() => window.open(url, "_blank", "noopener,noreferrer"), idx * 120);
     });
+  };
+
+  // Places a real order via the backend's kapruka_create_order MCP tool —
+  // this is what actually adds the cart to Kapruka's system, unlike opening
+  // product pages (which requires the user to manually re-add everything).
+  // `cartOverride` lets the SSE handler pass a freshly-computed snapshot
+  // instead of relying on the (possibly stale/batched) `cart` state.
+  const submitOrder = async (details: CheckoutDetails, cartOverride?: CartItem[]): Promise<CheckoutResult> => {
+    const orderCart = cartOverride ?? cart;
+    const headers = await authHeaders();
+    const res = await fetch(`${BACKEND_URL}/api/order`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({
+        user_id: userIdRef.current,
+        cart: orderCart.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity, image_url: i.image_url })),
+        recipient_name: details.recipientName,
+        delivery_address: details.deliveryAddress,
+        contact_number: details.contactNumber,
+        city: details.city,
+        gift_message: details.giftMessage,
+      }),
+    });
+    const data = await res.json();
+    if (data.status === "success") {
+      setCart([]);
+    }
+    return {
+      status: data.status === "success" ? "success" : data.status === "no_link" ? "no_link" : "error",
+      checkoutUrl: data.checkout_url ?? null,
+      orderId: data.order_id ?? null,
+      message: data.message || "Order submitted.",
+    };
   };
 
   // ── Clear history
@@ -516,12 +570,53 @@ export default function RukiPage() {
               }
             }
             else if (ev === "cart_update") {
-              const products = p.products || [];
-              products.forEach((prod: Product) => {
-                handleAddToCart(prod);
+              const products: Product[] = p.products || [];
+              let mergedCart = cart;
+              products.forEach((prod) => {
+                mergedCart = mergeProductIntoCart(mergedCart, prod);
               });
-              if (p.trigger_checkout) {
-                setTimeout(() => { handleCreateOrderLink(); }, 400);
+              if (products.length > 0) {
+                const wasEmpty = cart.length === 0;
+                setCart(mergedCart);
+                if (wasEmpty) {
+                  fetch(`${BACKEND_URL}/api/delivery?city=Colombo`)
+                    .then(r => r.json()).then(d => { if (d.fee) setDeliveryFee(d.fee); }).catch(() => {});
+                }
+                if (window.innerWidth < 768) setRightOpen(true);
+              }
+
+              if (p.trigger_checkout && mergedCart.length > 0) {
+                const details: CheckoutDetails = {
+                  recipientName: p.recipient_name || "",
+                  deliveryAddress: p.delivery_address || "",
+                  contactNumber: p.contact_number || "",
+                  city: "Colombo",
+                  giftMessage: p.gift_message || undefined,
+                };
+                const hasAllRequired = details.recipientName && details.deliveryAddress && details.contactNumber;
+                if (hasAllRequired) {
+                  // Ruki already extracted everything needed conversationally —
+                  // place the real order immediately instead of opening a form.
+                  submitOrder(details, mergedCart).then((res) => {
+                    setCheckoutAutoResult(res);
+                    setCheckoutPrefill(undefined);
+                    setCheckoutOpen(true);
+                    if (res.status === "success" && res.checkoutUrl) {
+                      window.open(res.checkoutUrl, "_blank", "noopener,noreferrer");
+                    }
+                  });
+                } else {
+                  // Missing a field (e.g. no phone number given) — open the
+                  // form pre-filled with whatever was captured in chat.
+                  setCheckoutAutoResult(undefined);
+                  setCheckoutPrefill({
+                    recipientName: details.recipientName || undefined,
+                    deliveryAddress: details.deliveryAddress || undefined,
+                    contactNumber: details.contactNumber || undefined,
+                    giftMessage: details.giftMessage,
+                  });
+                  setCheckoutOpen(true);
+                }
               }
               setCurrentStatus(null);
               setIsTyping(false);
@@ -698,7 +793,23 @@ export default function RukiPage() {
               >
                 Box is full!{" "}
                 <button
-                  onClick={handleCreateOrderLink}
+                  onClick={() => {
+                    // Gift Box items live in a separate staging area — merge them
+                    // into the real cart so they're actually part of the order.
+                    setCart(prev => {
+                      let next = prev;
+                      giftBoxItems.forEach(boxItem => {
+                        const hit = next.find(i => i.id === boxItem.id);
+                        next = hit
+                          ? next.map(i => i.id === boxItem.id ? { ...i, quantity: i.quantity + boxItem.quantity } : i)
+                          : [...next, { ...boxItem }];
+                      });
+                      return next;
+                    });
+                    setCheckoutAutoResult(undefined);
+                    setCheckoutPrefill(undefined);
+                    setCheckoutOpen(true);
+                  }}
                   className="underline underline-offset-2 cursor-pointer hover:text-amber/80 transition-colors"
                 >
                   Checkout now →
@@ -733,6 +844,7 @@ export default function RukiPage() {
           onAddToCart={handleAddToCart}
           onAddToBox={mode === "Gift Box Builder" ? handleAddToBox : undefined}
           activeMode={mode}
+          onAttachImage={() => imageInputRef.current?.click()}
         />
 
         {/* Floating multimodal controls: photo search + hands-free voice mode */}
@@ -772,10 +884,24 @@ export default function RukiPage() {
         delivery={delivery}
         total={total}
         updateQuantity={updateQuantity}
-        handleCreateOrderLink={handleCreateOrderLink}
+        onRemoveItem={handleRemoveFromCart}
+        onCheckout={() => { setCheckoutAutoResult(undefined); setCheckoutPrefill(undefined); setCheckoutOpen(true); }}
         open={rightOpen}
         onClose={() => setRightOpen(false)}
         onGroupGift={handleGroupGift}
+      />
+
+      <CheckoutModal
+        open={checkoutOpen}
+        onClose={() => setCheckoutOpen(false)}
+        cart={cart}
+        subtotal={subtotal}
+        delivery={delivery}
+        total={total}
+        prefill={checkoutPrefill}
+        autoResult={checkoutAutoResult}
+        onSubmit={submitOrder}
+        onOpenProductPages={handleOpenProductPages}
       />
 
       <GroupGiftModal

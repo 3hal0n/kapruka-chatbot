@@ -4,12 +4,16 @@ infrastructure/llm/vertex.py
 Vertex AI (google-genai) client factory for the zero-trust production path.
 
 Priority order:
-1. Vertex AI with Application Default Credentials (ADC) — used when
-   GOOGLE_GENAI_USE_VERTEXAI=true (or GCP_PROJECT_ID is set). On a GCE VM this
-   picks up the instance service-account automatically; locally it uses
-   `gcloud auth application-default login`.
-2. Fallback: the existing AI-Studio API-key client from infrastructure.llm.client
-   so current deployments (GEMINI_API_KEY) keep working unchanged.
+1. Vertex AI Express Mode — GOOGLE_GENAI_USE_VERTEXAI=true AND a GEMINI_API_KEY
+   is present. Routes through the Vertex endpoint using the same API key (no
+   ADC/service account required). Keys minted from a Vertex-linked AI Studio
+   project (format "AQ.xxx...") only work with vertexai=True set explicitly —
+   this is the path used by the current deployment.
+2. Vertex AI with Application Default Credentials (ADC) — GOOGLE_GENAI_USE_VERTEXAI=true
+   with NO GEMINI_API_KEY. On a GCE VM this picks up the instance service
+   account automatically; locally it requires `gcloud auth application-default login`.
+3. Fallback: the existing AI-Studio API-key client from infrastructure.llm.client
+   so deployments without Vertex enabled keep working unchanged.
 
 NOTE: per project convention we NEVER silently mock on a real credential error —
 callers get a raised exception and must degrade gracefully themselves.
@@ -57,7 +61,17 @@ def get_vertex_client() -> genai.Client:
             async_client_args={"transport": httpx.AsyncHTTPTransport(local_address="0.0.0.0")},
         )
 
+    api_key = os.environ.get("GEMINI_API_KEY", "")
+    has_key = bool(api_key) and api_key != "your_gemini_api_key"
+
+    if vertex_enabled() and has_key:
+        # Express Mode: same API key, but vertexai=True routes through Vertex.
+        _vertex_client = genai.Client(vertexai=True, api_key=api_key, **client_kwargs)
+        logger.info("Vertex AI client initialised (Express Mode, API key).")
+        return _vertex_client
+
     if vertex_enabled():
+        # No API key at all — fall back to pure ADC (GCE service account / gcloud).
         _vertex_client = genai.Client(
             vertexai=True,
             project=os.environ.get("GCP_PROJECT_ID", "kapruka-chatbot"),

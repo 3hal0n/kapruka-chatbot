@@ -61,7 +61,11 @@ export function AuthPanel({ onIdentity }: AuthPanelProps) {
   }, [isLoaded, isSignedIn, userId, label]);
 
   return (
-    <div className="fixed right-4 top-4 z-90 flex items-center gap-2">
+    // top-18 (not top-4): the chat surface already pins its cart pill to
+    // top-4/right-4 (see animated-ai-chat.tsx) — stacking below it avoids
+    // guessing at the cart pill's width, which changes with the item count
+    // and the "Cart" label being hidden below the sm breakpoint.
+    <div className="fixed right-4 top-18 z-90 flex items-center gap-2">
       <SignedOut>
         <SignInButton mode="modal">
           <button

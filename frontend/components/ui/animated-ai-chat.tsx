@@ -68,7 +68,18 @@ interface AnimatedAIChatProps {
   onAddToCart?: (product: Product) => void;
   onAddToBox?: (product: Product, rect: DOMRect) => void;
   activeMode?: string;
+
+  // Multimodal + quick-start controls in the input bar
+  onAttachImage?: () => void;
+  suggestions?: string[];
 }
+
+const DEFAULT_SUGGESTIONS = [
+  "What's trending for someone who loves tech?",
+  "I need groceries for the week",
+  "Find a birthday gift under Rs. 3000",
+  "Track my last order",
+];
 
 // Ruki quick-start suggestions — mirrors the Kapruka gifting shortcuts
 const SUGGESTION_PILLS: { label: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -198,12 +209,27 @@ export function AnimatedAIChat({
   onAddToCart,
   onAddToBox,
   activeMode = "Smart Shopping",
+  onAttachImage,
+  suggestions = DEFAULT_SUGGESTIONS,
 }: AnimatedAIChatProps) {
   const [inputValue, setInputValue] = React.useState("");
   const [isFocused, setIsFocused] = React.useState(false);
   const [railCollapsed, setRailCollapsed] = React.useState(false);
+  const [showSuggestions, setShowSuggestions] = React.useState(false);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const chatFeedEndRef = React.useRef<HTMLDivElement>(null);
+  const suggestionsRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!showSuggestions) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showSuggestions]);
 
   const isEmpty = messages.length === 0;
 
@@ -236,73 +262,116 @@ export function AnimatedAIChat({
 
   // ── Pill-shaped input with micro-interactive focus glow ring ──────────────
   const inputBar = (
-    <div
-      className={`relative flex items-end gap-2 rounded-[28px] border bg-surface/60 px-3 py-2 backdrop-blur-md transition-all duration-300 ${
-        isFocused
-          ? "border-primary/50 bg-surface shadow-[0_0_0_4px_rgba(124,58,173,0.14),0_14px_44px_-14px_rgba(60,27,99,0.4)]"
-          : "border-border shadow-sm"
-      }`}
-    >
-      <button
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer"
-        title="Attach media"
-        type="button"
+    <div className="relative" ref={suggestionsRef}>
+      {/* Smart suggestions popover */}
+      <AnimatePresence>
+        {showSuggestions && (
+          <motion.div
+            initial={{ opacity: 0, y: 8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.98 }}
+            transition={{ duration: 0.15 }}
+            className="absolute bottom-full left-0 z-30 mb-2 w-full min-w-64 overflow-hidden rounded-2xl border border-border bg-surface p-1.5 shadow-xl"
+          >
+            <div className="px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wider text-muted-foreground/60">
+              Try asking
+            </div>
+            {suggestions.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => {
+                  onSendMessage?.(s);
+                  setShowSuggestions(false);
+                }}
+                className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-foreground/90 transition-colors hover:bg-primary-soft cursor-pointer"
+              >
+                <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary-vivid" />
+                {s}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div
+        className={`relative flex items-end gap-2 rounded-[28px] border bg-surface/60 px-3 py-2 backdrop-blur-md transition-all duration-300 ${
+          isFocused
+            ? "border-primary-vivid/50 bg-surface shadow-[0_0_0_4px_var(--primary-glow),0_14px_44px_-14px_var(--primary-glow)]"
+            : "border-border shadow-sm"
+        }`}
       >
-        <Paperclip className="h-4 w-4" />
-      </button>
-
-      <textarea
-        ref={textareaRef}
-        rows={1}
-        value={inputValue}
-        onChange={(e) => setInputValue(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onFocus={() => setIsFocused(true)}
-        onBlur={() => setIsFocused(false)}
-        placeholder="What's on your mind?"
-        className="max-h-32 min-h-[24px] flex-1 resize-none self-center overflow-y-auto bg-transparent py-1.5 text-sm leading-relaxed outline-none placeholder:text-muted-foreground/60 select-text"
-      />
-
-      <div className="flex shrink-0 items-center gap-1.5">
         <button
+          onClick={() => onAttachImage?.()}
+          disabled={!onAttachImage}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+          title="Attach a photo to search"
+          aria-label="Attach a photo to search"
           type="button"
-          title="Smart suggestions"
-          className="hidden h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer sm:flex"
         >
-          <Sparkles className="h-4 w-4" />
+          <Paperclip className="h-4 w-4" />
         </button>
 
-        <button
-          onMouseDown={onStartRecording}
-          onMouseUp={onStopRecording}
-          onMouseLeave={onStopRecording}
-          onTouchStart={onStartRecording}
-          onTouchEnd={onStopRecording}
-          type="button"
-          className={`flex h-9 w-9 touch-none select-none items-center justify-center rounded-full transition-colors cursor-pointer ${
-            isRecording
-              ? "bg-red-500 text-white animate-pulse"
-              : "text-muted-foreground hover:bg-primary-soft hover:text-foreground"
-          }`}
-          title="Hold to record voice transcription"
-          aria-label="Hold to talk"
-        >
-          <Mic className="h-4 w-4" />
-        </button>
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          placeholder="What's on your mind?"
+          className="max-h-32 min-h-[24px] flex-1 resize-none self-center overflow-y-auto bg-transparent py-1.5 text-sm leading-relaxed outline-none placeholder:text-muted-foreground/60 select-text"
+        />
 
-        <button
-          onClick={handleSend}
-          disabled={!inputValue.trim()}
-          type="button"
-          className={`flex h-9 w-9 items-center justify-center rounded-full transition-all cursor-pointer ${
-            inputValue.trim()
-              ? "bg-primary text-primary-foreground shadow-sm hover:opacity-90 active:scale-95"
-              : "bg-muted text-muted-foreground/50 cursor-not-allowed"
-          }`}
-          aria-label="Send"
-        >
-          <ArrowUp className="h-4 w-4" />
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setShowSuggestions((p) => !p)}
+            title="Smart suggestions"
+            aria-label="Smart suggestions"
+            aria-expanded={showSuggestions}
+            className={`flex h-9 w-9 items-center justify-center rounded-full transition-colors cursor-pointer ${
+              showSuggestions
+                ? "bg-primary-soft text-primary-vivid"
+                : "text-muted-foreground hover:bg-primary-soft hover:text-foreground"
+            }`}
+          >
+            <Sparkles className="h-4 w-4" />
+          </button>
+
+          <button
+            onMouseDown={onStartRecording}
+            onMouseUp={onStopRecording}
+            onMouseLeave={onStopRecording}
+            onTouchStart={onStartRecording}
+            onTouchEnd={onStopRecording}
+            type="button"
+            className={`flex h-9 w-9 touch-none select-none items-center justify-center rounded-full transition-colors cursor-pointer ${
+              isRecording
+                ? "bg-red-500 text-white animate-pulse"
+                : "text-muted-foreground hover:bg-primary-soft hover:text-foreground"
+            }`}
+            title="Hold to record voice transcription"
+            aria-label="Hold to talk"
+          >
+            <Mic className="h-4 w-4" />
+          </button>
+
+          <button
+            onClick={handleSend}
+            disabled={!inputValue.trim()}
+            type="button"
+            className={`flex h-9 w-9 items-center justify-center rounded-full transition-all cursor-pointer ${
+              inputValue.trim()
+                ? "bg-linear-to-r from-primary-vivid to-primary-vivid-soft text-primary-foreground shadow-sm hover:brightness-105 active:scale-95"
+                : "bg-muted text-muted-foreground/50 cursor-not-allowed"
+            }`}
+            aria-label="Send"
+          >
+            <ArrowUp className="h-4 w-4" />
+          </button>
+        </div>
       </div>
     </div>
   );
