@@ -6,11 +6,13 @@ All agents call `chat()` or `chat_stream()` — never import the google-genai SD
 """
 
 import os
+import sys
 import json
 import asyncio
 import logging
 from typing import Generator, AsyncGenerator
 
+import httpx
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
@@ -54,7 +56,22 @@ def _get_client() -> genai.Client:
         api_key = os.getenv("GEMINI_API_KEY", "")
         if not api_key or api_key == "your_gemini_api_key":
             raise RuntimeError("GEMINI_API_KEY is not set in .env")
-        _client_instance = genai.Client(api_key=api_key)
+
+        client_kwargs = {"api_key": api_key}
+        # On Windows, httpx's default dual-stack connect stalls ~20s on the
+        # endpoint's IPv6 address before falling back to IPv4, and the SDK's
+        # internal retries stack that into a 40s+ hang — even though `curl` and
+        # the configured http_options.timeout are unaffected. Binding the httpx
+        # transport to an IPv4 source address forces IPv4 and drops each call
+        # from ~40s (hang) to ~1s. Linux/containers (the deploy target) don't
+        # hit this, so we only apply it on win32 to leave the VM path untouched.
+        if sys.platform == "win32":
+            client_kwargs["http_options"] = types.HttpOptions(
+                client_args={"transport": httpx.HTTPTransport(local_address="0.0.0.0")},
+                async_client_args={"transport": httpx.AsyncHTTPTransport(local_address="0.0.0.0")},
+            )
+
+        _client_instance = genai.Client(**client_kwargs)
     return _client_instance
 
 
