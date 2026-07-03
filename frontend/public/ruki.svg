@@ -1,38 +1,10 @@
-<svg viewBox="0 0 220 52" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Ruki AI">
-  <!-- Gift box icon -->
-  <rect x="4" y="20" width="26" height="22" rx="4" fill="white" opacity="0.92"/>
-  <line x1="4" y1="30" x2="30" y2="30" stroke="#FFD700" stroke-width="2.5"/>
-  <line x1="17" y1="20" x2="17" y2="42" stroke="#FFD700" stroke-width="2.5"/>
-  <!-- Bow left wing -->
-  <path d="M11 20 C9 12 20 11 17 20" fill="#FFD700"/>
-  <!-- Bow right wing -->
-  <path d="M23 20 C25 12 14 11 17 20" fill="#FFD700"/>
-  <!-- Bow knot -->
-  <circle cx="17" cy="20" r="3.5" fill="#FFB800"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512" fill="none">
+  <!-- Left Eye Dot: Solid Kapruka Purple -->
+  <circle cx="34" cy="36" r="6.5" fill="#3c1b63" />
 
-  <!-- "Ruki" wordmark -->
-  <text x="42" y="37"
-    font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
-    font-weight="900"
-    font-size="28"
-    letter-spacing="-0.5"
-    fill="white">Ruki</text>
+  <!-- Right Eye Dot: Solid Kapruka Purple -->
+  <circle cx="66" cy="36" r="6.5" fill="#3c1b63" />
 
-  <!-- "AI" badge pill -->
-  <rect x="118" y="18" width="34" height="20" rx="6" fill="#FFD700"/>
-  <text x="135" y="33"
-    font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
-    font-weight="900"
-    font-size="13"
-    text-anchor="middle"
-    fill="#1E0B36">AI</text>
-
-  <!-- Tagline -->
-  <text x="42" y="48"
-    font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
-    font-weight="600"
-    font-size="9"
-    letter-spacing="1.5"
-    fill="white"
-    opacity="0.6">KAPRUKA GIFT CONCIERGE</text>
+  <!-- Official Geometric Kapruka Smile Ring with Flat Block Cuts -->
+  <path d="M 12 56 H 26 C 26 70, 74 70, 74 56 H 88 C 88 82, 12 82, 12 56 Z" fill="#FDD835" />
 </svg>

@@ -860,7 +860,10 @@ export default function RukiPage() {
           ) : undefined}
         />
 
-        {/* Floating multimodal controls: photo search + hands-free voice mode */}
+        {/* Floating multimodal controls: photo search + hands-free voice mode.
+            Hidden while the voice panel is open — it docks in the same corner
+            band and carries its own close control. */}
+        {!accessibilityOpen && (
         <div className="pointer-events-none absolute bottom-28 right-4 z-40 flex flex-col gap-3">
           <button
             onClick={() => imageInputRef.current?.click()}
@@ -879,6 +882,7 @@ export default function RukiPage() {
             <PersonStanding className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
+        )}
         <input
           ref={imageInputRef}
           type="file"

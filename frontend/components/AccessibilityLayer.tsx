@@ -1,14 +1,22 @@
 "use client";
 
 /**
- * AccessibilityLayer.tsx — dedicated hands-free Voice Assistant Mode.
+ * AccessibilityLayer.tsx — hands-free Voice Assistant as an ambient overlay.
  *
- * Full-screen, ultra-high-contrast overlay for low-vision / motor-impaired /
- * voice-first shoppers:
- *  - Web Speech API `SpeechRecognition` captures the request.
- *  - Every assistant reply is spoken aloud via `speechSynthesis` while open.
- *  - Tap targets exceed 64px, layout is semantic and screen-reader friendly,
- *    and a live frequency-style animation gives non-verbal listening feedback.
+ * NOT a full-screen takeover: the regular chat log, product carousels, and
+ * cart stay fully visible and interactive. This renders as a slim floating
+ * panel docked just above the chat input with the waveform + mic status.
+ *
+ * Everything routes through the normal chat pipeline: spoken input is
+ * submitted exactly like a typed message (so the transcript lands in chat
+ * history), the AI's text reply renders in the chat log with its product
+ * carousel, and the reply is read aloud while the panel shows "speaking".
+ * After Ruki finishes speaking, the mic automatically re-opens (hands-free
+ * loop) until the panel is closed.
+ *
+ * Theme-aware: styled with the design tokens (surface/border/foreground), so
+ * it follows the app's light/dark mode instead of forcing a dark "phone call"
+ * screen.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -35,26 +43,26 @@ function getSpeechRecognition(): any | null {
   return Ctor ? new Ctor() : null;
 }
 
-/** Animated frequency bars — visual feedback that Ruki is listening/speaking. */
+/** Compact animated frequency bars — listening/speaking feedback. */
 function FrequencyBars({ active, color }: { active: boolean; color: string }) {
-  const bars = [14, 30, 22, 44, 28, 52, 34, 52, 28, 44, 22, 30, 14];
+  const bars = [8, 18, 12, 26, 16, 30, 20, 30, 16, 26, 12, 18, 8];
   return (
-    <div className="flex h-16 items-center justify-center gap-1.5" aria-hidden="true">
+    <div className="flex h-8 shrink-0 items-center justify-center gap-1" aria-hidden="true">
       {bars.map((h, i) => (
         <motion.span
           key={i}
-          className={`w-1.5 rounded-full ${color}`}
+          className={`w-1 rounded-full ${color}`}
           animate={
             active
               ? { height: [h * 0.4, h, h * 0.55, h * 0.9, h * 0.4] }
-              : { height: 6 }
+              : { height: 4 }
           }
           transition={
             active
               ? { duration: 1.1, repeat: Infinity, delay: i * 0.06, ease: "easeInOut" }
               : { duration: 0.3 }
           }
-          style={{ height: 6 }}
+          style={{ height: 4 }}
         />
       ))}
     </div>
@@ -96,7 +104,8 @@ export function AccessibilityLayer({
       if (currentResult) {
         setTranscript(currentResult);
         setPhase("thinking");
-        // Automatically route to the backend multi-agent loop gateway.
+        // Routes through the SAME path as typed input — the transcript is
+        // appended to chat history and the reply streams into the chat log.
         onSubmit(currentResult);
       } else {
         setPhase("idle");
@@ -150,7 +159,7 @@ export function AccessibilityLayer({
     else startListening();
   };
 
-  // ── Text-to-speech: speak each new assistant reply while the mode is open ──
+  // ── Text-to-speech: read each new assistant reply aloud while open ─────────
   useEffect(() => {
     if (!open || !lastResponse) return;
     if (typeof window === "undefined" || !window.speechSynthesis) return;
@@ -174,7 +183,7 @@ export function AccessibilityLayer({
     window.speechSynthesis.speak(utterance);
   }, [lastResponse, open, startListening]);
 
-  // Reflect backend progress and stop everything when the overlay closes.
+  // Reflect backend progress and stop everything when the panel closes.
   useEffect(() => {
     if (!open) {
       stopListening();
@@ -189,106 +198,91 @@ export function AccessibilityLayer({
   }, [open, isBusy, stopListening]);
 
   const phaseLabel: Record<VoicePhase, string> = {
-    idle: "Tap the microphone and tell Ruki what you need",
-    listening: "Ruki AI is listening…",
-    thinking: "Ruki is finding that for you…",
+    idle: "Tap the mic and speak",
+    listening: "Listening…",
+    thinking: "Ruki is finding that…",
     speaking: "Ruki is speaking…",
+  };
+
+  const phaseColor: Record<VoicePhase, string> = {
+    idle: "text-muted-foreground",
+    listening: "text-primary-vivid",
+    thinking: "text-muted-foreground",
+    speaking: "text-emerald-500",
   };
 
   return (
     <AnimatePresence>
       {open && (
-        <motion.section
-          role="dialog"
-          aria-modal="true"
-          aria-label="Ruki voice assistant mode"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
-          className="fixed inset-0 z-100 flex flex-col items-center justify-between bg-slate-950 px-6 py-10 text-white"
-        >
-          {/* Header */}
-          <header className="flex w-full max-w-2xl items-center justify-between">
-            <h2 className="text-2xl font-black tracking-tight">
-              Voice Assistant <span className="text-purple-400">Mode</span>
-            </h2>
+        // Ambient top banner: new replies + carousels arrive at the BOTTOM of
+        // the chat, so docking up here never covers what Ruki is reading out.
+        // (top-20 on mobile clears the floating menu/cart pills; top-4 on md+.)
+        <div className="pointer-events-none fixed inset-x-0 top-20 z-60 flex justify-center px-4 md:top-4">
+          <motion.section
+            role="complementary"
+            aria-label="Ruki hands-free voice assistant"
+            initial={{ opacity: 0, y: -24, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -24, scale: 0.97 }}
+            transition={{ type: "spring", stiffness: 320, damping: 30 }}
+            className="pointer-events-auto flex w-full max-w-xl items-center gap-3 rounded-3xl border border-border bg-surface/90 px-3.5 py-3 shadow-2xl shadow-primary-glow backdrop-blur-xl"
+          >
+            {/* Mic — the primary control, generous tap target */}
+            <button
+              onClick={toggleVoiceMode}
+              disabled={!supported || isBusy}
+              aria-label={
+                phase === "listening"
+                  ? "Stop listening voice control"
+                  : "Activate voice navigation engine"
+              }
+              className={`grid h-14 w-14 min-h-14 min-w-14 shrink-0 place-items-center rounded-full text-white shadow-lg transition-all focus-visible:outline-3 focus-visible:outline-ring disabled:opacity-40 cursor-pointer ${
+                phase === "listening"
+                  ? "animate-pulse bg-red-600 hover:bg-red-500"
+                  : "bg-linear-to-r from-primary-vivid to-primary-vivid-soft hover:brightness-110"
+              }`}
+            >
+              <Mic className="h-6 w-6" aria-hidden="true" />
+            </button>
+
+            {/* Status + live transcript */}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2.5">
+                <FrequencyBars
+                  active={phase === "listening" || phase === "speaking"}
+                  color={phase === "speaking" ? "bg-emerald-500" : "bg-primary-vivid"}
+                />
+                <p
+                  aria-live="polite"
+                  className={`truncate text-sm font-extrabold ${phaseColor[phase]}`}
+                >
+                  {supported
+                    ? phaseLabel[phase]
+                    : "Voice needs Chrome or Edge"}
+                </p>
+                {phase === "speaking" && (
+                  <Volume2 className="h-4 w-4 shrink-0 text-emerald-500" aria-hidden="true" />
+                )}
+              </div>
+              <p className="mt-0.5 truncate text-[11px] font-medium text-muted-foreground">
+                {transcript ? (
+                  <span className="font-mono">“{transcript}”</span>
+                ) : (
+                  "Hands-free mode — replies read aloud, chat stays live below"
+                )}
+              </p>
+            </div>
+
+            {/* Exit voice mode */}
             <button
               onClick={onClose}
               aria-label="Exit voice assistant mode"
-              className="grid h-16 w-16 min-h-16 min-w-16 place-items-center rounded-full border-2 border-white/25 bg-white/10 transition-colors hover:bg-white/20 focus-visible:outline-4 focus-visible:outline-purple-400"
+              className="grid h-11 w-11 min-h-11 min-w-11 shrink-0 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-3 focus-visible:outline-ring cursor-pointer"
             >
-              <X className="h-8 w-8" aria-hidden="true" />
+              <X className="h-5 w-5" aria-hidden="true" />
             </button>
-          </header>
-
-          {/* Live status canvas */}
-          <main className="flex w-full max-w-2xl flex-1 flex-col items-center justify-center gap-8 text-center">
-            <FrequencyBars
-              active={phase === "listening" || phase === "speaking"}
-              color={phase === "speaking" ? "bg-emerald-400" : "bg-purple-400"}
-            />
-
-            <p
-              aria-live="polite"
-              className="text-3xl font-bold leading-snug text-white"
-            >
-              {phaseLabel[phase]}
-            </p>
-
-            {transcript && (
-              <p className="max-w-xl rounded-2xl border border-purple-500/30 bg-purple-500/10 px-6 py-4 font-mono text-lg text-purple-200">
-                “{transcript}”
-              </p>
-            )}
-
-            {!supported && (
-              <p role="alert" className="max-w-xl text-xl font-semibold text-amber-300">
-                Speech recognition isn&apos;t supported in this browser. Please use
-                Chrome or Edge for hands-free shopping.
-              </p>
-            )}
-          </main>
-
-          {/* Primary controls — every target is ≥64px */}
-          <footer className="flex w-full max-w-2xl items-center justify-center gap-10 pb-4">
-            <div className="flex flex-col items-center gap-3">
-              <button
-                onClick={toggleVoiceMode}
-                disabled={!supported || isBusy}
-                aria-label={
-                  phase === "listening"
-                    ? "Stop listening voice control"
-                    : "Activate voice navigation engine"
-                }
-                className={`grid h-24 w-24 min-h-24 min-w-24 place-items-center rounded-full shadow-2xl transition-all focus-visible:outline-4 focus-visible:outline-white disabled:opacity-40 ${
-                  phase === "listening"
-                    ? "animate-pulse bg-red-600 hover:bg-red-500"
-                    : "bg-purple-600 hover:bg-purple-500"
-                }`}
-              >
-                <Mic className="h-11 w-11" aria-hidden="true" />
-              </button>
-              <span className="text-base font-bold text-white/80">
-                {phase === "listening" ? "Stop" : "Speak"}
-              </span>
-            </div>
-
-            <div className="flex flex-col items-center gap-3">
-              <div
-                aria-hidden="true"
-                className="grid h-24 w-24 place-items-center rounded-full border-2 border-white/15 bg-white/5"
-              >
-                <Volume2
-                  className={`h-11 w-11 ${
-                    phase === "speaking" ? "text-emerald-400" : "text-white/40"
-                  }`}
-                />
-              </div>
-              <span className="text-base font-bold text-white/80">Replies aloud</span>
-            </div>
-          </footer>
-        </motion.section>
+          </motion.section>
+        </div>
       )}
     </AnimatePresence>
   );
