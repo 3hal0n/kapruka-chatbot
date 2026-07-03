@@ -98,6 +98,8 @@ class Router:
             r"\bproceed\s+to\s+(?:buy|order|checkout|pay)\b",
             r"\b(?:let'?s?|lets?)\s+(?:proceed|go\s+ahead|checkout)\b",
             r"\bgo\s+ahead\s+(?:and\s+)?(?:order|buy|checkout)\b",
+            # Sinhala/Tanglish: "cart ekete danna", "cart eke daala", "cart ekata dapan"
+            r"\bcart\s+ek\w*\s+da\w*\b",
         ]
 
         for pattern in CART_PATTERNS:
@@ -140,6 +142,21 @@ class Router:
         quoted = _re.search(r'["\']([^"\']{3,})["\']', user_message)
         if quoted:
             return quoted.group(1).strip()
+
+        # 1.5. Sinhala/Tanglish leading phrase: "s11 mini eke cart ekete danna"
+        # → the product is everything BEFORE the "cart ek… da…" tail.
+        sinhala_match = _re.search(
+            r"^(.*?)\s+(?:ek\w*\s+)?cart\s+ek\w*", user_message, _re.IGNORECASE
+        )
+        if sinhala_match:
+            candidate = sinhala_match.group(1).strip()
+            # Strip trailing Sinhala particles that bled into the capture.
+            candidate = _re.sub(
+                r"\b(?:eke|eka|ekak|ekata|ekete|mata|mage|oyata)\s*$", "",
+                candidate, flags=_re.IGNORECASE,
+            ).strip()
+            if len(candidate) > 2:
+                return candidate
 
         # 2. Phrase extraction — capture between action verb and terminus
         phrase_match = _re.search(
@@ -193,7 +210,8 @@ class Router:
         "fifth": 4, "5th": 4,
     }
 
-    # Filler that carries no product signal — verbs, pronouns, chit-chat.
+    # Filler that carries no product signal — verbs, pronouns, chit-chat,
+    # plus Sinhala/Tanglish particles ("… eke cart ekete danna").
     _CART_STOPWORDS = {
         "add", "buy", "put", "place", "get", "take", "me", "to", "the", "my",
         "a", "an", "cart", "in", "into", "it", "that", "this", "one", "item",
@@ -202,7 +220,43 @@ class Router:
         "loves", "want", "wants", "and", "then", "now", "also", "shown",
         "showed", "saw", "earlier", "before", "checkout", "order", "for",
         "her", "him", "them", "of", "on", "so",
+        "eke", "eka", "ekak", "ekata", "ekete", "ekath", "danna", "daanna",
+        "dapan", "dala", "daala", "oni", "ona", "mata", "mage", "oyata",
+        "karala", "karanna", "genna",
     }
+
+    # Modifier words too generic to identify a product on their own — a search
+    # result must share at least one token OUTSIDE this set with the query
+    # ("s11 mini" must match on "s11", never on "mini" alone → no Mini Cake).
+    _GENERIC_MODIFIERS = {
+        "mini", "small", "large", "big", "new", "pro", "plus", "max", "set",
+        "pack", "box", "combo", "item", "gift", "piece", "style",
+    }
+
+    def _pick_verified_search_result(self, query: str, products: list) -> dict | None:
+        """From MCP keyword-search results, return the first product whose name
+        shares a DISTINCTIVE token with the query — or None (no blind adds)."""
+        import re as _re
+
+        def tokens(s: str) -> set[str]:
+            out = set()
+            for t in _re.findall(r"[a-z0-9]+", (s or "").lower()):
+                if len(t) < 2:
+                    continue
+                out.add(t[:-1] if len(t) > 3 and t.endswith("s") else t)
+            return out
+
+        q_tokens = tokens(query) - self._CART_STOPWORDS
+        distinctive = q_tokens - self._GENERIC_MODIFIERS
+        required = distinctive or q_tokens
+        if not required:
+            return None
+        for p in products:
+            if not isinstance(p, dict):
+                continue
+            if required & tokens(str(p.get("name") or "")):
+                return p
+        return None
 
     def _match_last_product(self, query: str, user_message: str) -> dict | None:
         """Resolve a cart reference against the last carousel shown to the user.
@@ -626,22 +680,30 @@ class Router:
                     cart_products_to_add.append(p_to_add)
                     continue
 
-                # 2. Nothing shown / no overlap — fall back to a live search.
+                # 2. Nothing shown / no overlap — fall back to a live search,
+                # but VERIFY the hit shares a distinctive token with the query.
+                # Kapruka's keyword relevance is loose ("s11 mini" → "Mini
+                # Cake"); adding its blind top hit put wrong items in carts.
                 if q:
                     try:
                         from infrastructure.mcp.client import kapruka_search_products
-                        search_res = await kapruka_search_products(q, limit=1)
+                        search_res = await kapruka_search_products(q, limit=5)
                         products = []
                         if isinstance(search_res, dict):
                             products = search_res.get("products") or search_res.get("result") or []
                         elif isinstance(search_res, list):
                             products = search_res
 
-                        if products:
-                            # Take the first product matching and set its quantity
-                            p_to_add = dict(products[0])
+                        verified = self._pick_verified_search_result(q, products)
+                        if verified is not None:
+                            p_to_add = dict(verified)
                             p_to_add["quantity"] = quantity
                             cart_products_to_add.append(p_to_add)
+                        elif products:
+                            print(
+                                f"[CartResolver] Rejected top search hit "
+                                f"'{products[0].get('name')}' for query '{q}' — no distinctive token overlap."
+                            )
                     except Exception as e:
                         print(f"Error searching product '{q}' for cart: {e}")
 

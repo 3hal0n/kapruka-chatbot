@@ -1,6 +1,9 @@
 claude:
   model: gemini-2.5-flash
-  model_intent_classify: gemini-2.5-flash
+  # flash-lite: ~2x faster first-token on the structured JSON classification
+  # (the biggest fixed cost of every turn). Replies stay on full flash.
+  # Revert to gemini-2.5-flash if classification quality ever regresses.
+  model_intent_classify: gemini-2.5-flash-lite
   model_logistics: gemini-2.5-flash
   max_tokens_classify: 512
   max_tokens_respond: 600

@@ -414,17 +414,23 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
         "gadget", "gadgets", "tech", "tech gift", "tech item",
     }
     if search_query.lower().strip() in GENERIC_TECH_TERMS:
-        for eq in ("wireless headphones", "bluetooth speaker", "smart watch"):
-            try:
-                res = await kapruka_search_products(eq, limit=CATALOG_SEARCH_TOP_K)
-                extra = []
-                if isinstance(res, dict):
-                    extra = res.get("products") or res.get("result") or []
-                elif isinstance(res, list):
-                    extra = res
-                products.extend(p for p in extra if isinstance(p, dict))
-            except Exception as e:
-                print(f"[TechExpansion] Query '{eq}' failed: {e}")
+        _expansion_queries = ("wireless headphones", "bluetooth speaker", "smart watch")
+        # Fire the expansion searches CONCURRENTLY — sequential MCP round trips
+        # were adding 2-3s to every generic-tech turn.
+        _results = await asyncio.gather(
+            *(kapruka_search_products(eq, limit=CATALOG_SEARCH_TOP_K) for eq in _expansion_queries),
+            return_exceptions=True,
+        )
+        for eq, res in zip(_expansion_queries, _results):
+            if isinstance(res, Exception):
+                print(f"[TechExpansion] Query '{eq}' failed: {res}")
+                continue
+            extra = []
+            if isinstance(res, dict):
+                extra = res.get("products") or res.get("result") or []
+            elif isinstance(res, list):
+                extra = res
+            products.extend(p for p in extra if isinstance(p, dict))
         seen_ids: set = set()
         deduped_pool: list = []
         for p in products:
@@ -550,19 +556,31 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
             if not fallback_queries:
                 fallback_queries = OCCASION_FALLBACKS["default"]
         
-        for fq in fallback_queries:
-            if fq.lower() == sq_lower and fq == search_query:
-                # Same query already tried — skip to avoid infinite loop
-                continue
-            try:
-                print(f"Low results for '{search_query}'. Trying fallback search query: '{fq}'")
-                fallback_res = await kapruka_search_products(fq, limit=CATALOG_SEARCH_TOP_K)
+        pending_queries = [
+            fq for fq in fallback_queries
+            if not (fq.lower() == sq_lower and fq == search_query)
+        ]
+        if pending_queries:
+            print(f"Low results for '{search_query}'. Trying fallbacks concurrently: {pending_queries}")
+            # All fallback searches fire CONCURRENTLY (they were sequential,
+            # stacking 1-2s of MCP latency per query onto slow turns); results
+            # merge in the original priority order.
+            fb_results = await asyncio.gather(
+                *(kapruka_search_products(fq, limit=CATALOG_SEARCH_TOP_K) for fq in pending_queries),
+                return_exceptions=True,
+            )
+            for fq, fallback_res in zip(pending_queries, fb_results):
+                if len(products) >= 5:
+                    break
+                if isinstance(fallback_res, Exception):
+                    print(f"Fallback query '{fq}' failed: {fallback_res}")
+                    continue
                 fb_products = []
                 if isinstance(fallback_res, dict):
                     fb_products = fallback_res.get("products") or fallback_res.get("result") or []
                 elif isinstance(fallback_res, list):
                     fb_products = fallback_res
-                
+
                 if fb_products:
                     fb_products = [p for p in fb_products if isinstance(p, dict)]
                     if budget_limit is not None:
@@ -577,10 +595,6 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
                             seen.add(pid)
                             deduped.append(p)
                     products = deduped
-                    if len(products) >= 5:
-                        break
-            except Exception as e:
-                print(f"Fallback query '{fq}' failed: {e}")
 
     # ── CATEGORY FIDELITY FILTER ─────────────────────────────────────────────
     # Kapruka's keyword search matches "flowers" against anything with the word

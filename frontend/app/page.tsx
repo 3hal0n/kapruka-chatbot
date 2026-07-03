@@ -6,6 +6,7 @@ import { Gift } from "lucide-react";
 
 import { RightCart, CartItem } from "@/components/RightCart";
 import { GroupGiftModal } from "@/components/GroupGiftModal";
+import { CheckoutModal, CheckoutDetails, CheckoutResult, CheckoutPrefill } from "@/components/CheckoutModal";
 import { Product, kaprukaBuyUrl } from "@/components/ProductCard";
 import { AnimatedAIChat, Message as ChatMessage } from "@/components/ui/animated-ai-chat";
 import { AccessibilityLayer } from "@/components/AccessibilityLayer";
@@ -57,6 +58,12 @@ export default function RukiPage() {
   // ── Group Gift
   const [isGroupGiftModalOpen, setIsGroupGiftModalOpen] = useState(false);
   const [groupGiftLink, setGroupGiftLink] = useState("");
+
+  // ── Checkout — kapruka_create_order click-to-pay link (per MCP docs, the
+  // only way to transfer a multi-item cart to kapruka.com).
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [checkoutPrefill, setCheckoutPrefill] = useState<CheckoutPrefill | undefined>(undefined);
+  const [checkoutAutoResult, setCheckoutAutoResult] = useState<CheckoutResult | undefined>(undefined);
 
   // ── Gift Box Builder
   const [giftBoxItems, setGiftBoxItems] = useState<CartItem[]>([]);
@@ -237,10 +244,8 @@ export default function RukiPage() {
   const delivery = cart.length > 0 ? deliveryFee : 0;
   const total = subtotal + delivery;
 
-  // "Buy on Kapruka": checkout happens on Kapruka's own site — we simply open
-  // each cart item's real Kapruka product page (staggered so popup blockers
-  // treat them as one user gesture). `items` defaults to the current cart;
-  // the SSE handler passes a fresh snapshot to dodge batched-state staleness.
+  // Fallback only: open each cart item's Kapruka product page individually
+  // (used when order creation fails — product pages can't carry the cart).
   const handleOpenProductPages = (items?: CartItem[]) => {
     const list = items ?? cart;
     if (list.length === 0) return;
@@ -248,6 +253,38 @@ export default function RukiPage() {
       const url = item.url || `https://www.kapruka.com/buyonline/${item.name.toLowerCase().replace(/ /g, "-")}/kid/${item.id.toLowerCase()}`;
       setTimeout(() => window.open(url, "_blank", "noopener,noreferrer"), idx * 120);
     });
+  };
+
+  // Real multi-item checkout: /api/order → kapruka_create_order → click-to-pay
+  // URL for the WHOLE cart (no Kapruka account needed, prices locked 60 min).
+  // `cartOverride` lets the SSE handler pass a fresh snapshot past batching.
+  const submitOrder = async (details: CheckoutDetails, cartOverride?: CartItem[]): Promise<CheckoutResult> => {
+    const orderCart = cartOverride ?? cart;
+    const headers = await authHeaders();
+    const res = await fetch(`${BACKEND_URL}/api/order`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({
+        user_id: userIdRef.current,
+        cart: orderCart.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity, image_url: i.image_url })),
+        recipient_name: details.recipientName,
+        delivery_address: details.deliveryAddress,
+        contact_number: details.contactNumber,
+        city: details.city,
+        gift_message: details.giftMessage,
+      }),
+    });
+    const data = await res.json();
+    if (data.status === "success" && data.checkout_url) {
+      // Order created on Kapruka's side — the pay link owns the cart now.
+      setCart([]);
+    }
+    return {
+      status: data.status === "success" ? "success" : data.status === "no_link" ? "no_link" : "error",
+      checkoutUrl: data.checkout_url ?? null,
+      orderId: data.order_id ?? null,
+      message: data.message || "Order submitted.",
+    };
   };
 
   // ── Clear history
@@ -490,9 +527,36 @@ export default function RukiPage() {
               }
 
               if (p.trigger_checkout && mergedCart.length > 0) {
-                // Checkout happens on Kapruka's own site — open the items'
-                // real product pages (fresh snapshot, not batched state).
-                setTimeout(() => handleOpenProductPages(mergedCart), 400);
+                const details: CheckoutDetails = {
+                  recipientName: p.recipient_name || "",
+                  deliveryAddress: p.delivery_address || "",
+                  contactNumber: p.contact_number || "",
+                  city: "Colombo",
+                  giftMessage: p.gift_message || undefined,
+                };
+                if (details.recipientName && details.deliveryAddress && details.contactNumber) {
+                  // Ruki captured everything conversationally — create the
+                  // order and open the click-to-pay link straight away.
+                  submitOrder(details, mergedCart).then((res) => {
+                    setCheckoutAutoResult(res);
+                    setCheckoutPrefill(undefined);
+                    setCheckoutOpen(true);
+                    if (res.status === "success" && res.checkoutUrl) {
+                      window.open(res.checkoutUrl, "_blank", "noopener,noreferrer");
+                    }
+                  });
+                } else {
+                  // Missing details — open the form pre-filled with whatever
+                  // was captured in the conversation.
+                  setCheckoutAutoResult(undefined);
+                  setCheckoutPrefill({
+                    recipientName: details.recipientName || undefined,
+                    deliveryAddress: details.deliveryAddress || undefined,
+                    contactNumber: details.contactNumber || undefined,
+                    giftMessage: details.giftMessage,
+                  });
+                  setCheckoutOpen(true);
+                }
               }
               setCurrentStatus(null);
               setIsTyping(false);
@@ -752,10 +816,21 @@ export default function RukiPage() {
         total={total}
         updateQuantity={updateQuantity}
         onRemoveItem={handleRemoveFromCart}
-        onCheckout={() => handleOpenProductPages()}
+        onCheckout={() => { setCheckoutAutoResult(undefined); setCheckoutPrefill(undefined); setCheckoutOpen(true); }}
         open={rightOpen}
         onClose={() => setRightOpen(false)}
         onGroupGift={handleGroupGift}
+      />
+
+      <CheckoutModal
+        open={checkoutOpen}
+        onClose={() => setCheckoutOpen(false)}
+        cart={cart}
+        total={total}
+        prefill={checkoutPrefill}
+        autoResult={checkoutAutoResult}
+        onSubmit={submitOrder}
+        onOpenProductPages={() => handleOpenProductPages()}
       />
 
       <GroupGiftModal
