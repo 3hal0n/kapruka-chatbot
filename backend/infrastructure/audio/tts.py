@@ -40,10 +40,16 @@ import httpx
 logger = logging.getLogger("kapruka-tts")
 
 # ── Configuration (env-overridable) ──────────────────────────────────────────
-# si-LK ships Standard voices; -A is the female profile. If Google later adds
-# Neural2/Wavenet si-LK variants, point TTS_VOICE_NAME at one — no code change.
-TTS_LANGUAGE_CODE = os.getenv("TTS_LANGUAGE_CODE", "si-LK")
-TTS_VOICE_NAME = os.getenv("TTS_VOICE_NAME", "si-LK-Standard-A")
+# Two female profiles, chosen per-request by language detection:
+# - Sinhala/Tanglish text → si-LK Standard female (correct Sinhala rendering;
+#   its English is accented, which suits genuinely mixed sentences).
+# - Pure-English text → a fluent Neural2 English female (British inflection is
+#   the closest match to Sri Lankan English) so English replies don't get the
+#   si-LK voice's broken accent.
+TTS_VOICE_SI = os.getenv("TTS_VOICE_NAME_SI", os.getenv("TTS_VOICE_NAME", "si-LK-Standard-A"))
+TTS_LANGUAGE_SI = os.getenv("TTS_LANGUAGE_CODE_SI", "si-LK")
+TTS_VOICE_EN = os.getenv("TTS_VOICE_NAME_EN", "en-GB-Neural2-A")
+TTS_LANGUAGE_EN = os.getenv("TTS_LANGUAGE_CODE_EN", "en-GB")
 TTS_SPEAKING_RATE = float(os.getenv("TTS_SPEAKING_RATE", "0.97"))
 TTS_TIMEOUT_SECONDS = float(os.getenv("TTS_TIMEOUT_SECONDS", "15.0"))
 
@@ -57,6 +63,36 @@ _MAX_CHARS = 1200
 
 class TTSUnavailableError(RuntimeError):
     """Raised when real synthesis fails — callers fall back to browser TTS."""
+
+
+# ── Language detection ────────────────────────────────────────────────────────
+
+# Native Sinhala script block.
+_SINHALA_SCRIPT = re.compile(r"[඀-෿]")
+
+# Distinctly-Sinhala romanised tokens (word-boundary matched). Deliberately
+# excludes anything that is also an English word ("one", "mama", "hari" is
+# borderline but overwhelmingly Sinhala in this domain).
+_ROMANIZED_SINHALA = re.compile(
+    r"\b(?:mata|oyata|apita|mage|oyage|ekak|ekata|eka|oni|onee|aiyo|aney|"
+    r"machan|puluwan|puluwanda|hadiyak|thohfe|thiyenawa|thiyenawada|ganna|"
+    r"gannawa|karanna|denna|hoyanna|balanna|hoda|hodai|lassana|supiri|"
+    r"amma|thaththa|akka|malli|nangi|ayya|kade|gedara|salli|mokada|"
+    r"kohomada|wage|witharai|ehenam|habai|eth|nathnam|walata|walatada|"
+    r"kiyala|kiyanne|innawa|inne|yanna|enna|badu|genna)\b",
+    re.IGNORECASE,
+)
+
+
+def pick_voice(text: str) -> tuple[str, str]:
+    """Return (language_code, voice_name) for the given text.
+
+    Sinhala script OR any romanised-Sinhala token → the si-LK female voice;
+    otherwise the fluent English female voice.
+    """
+    if _SINHALA_SCRIPT.search(text) or _ROMANIZED_SINHALA.search(text):
+        return TTS_LANGUAGE_SI, TTS_VOICE_SI
+    return TTS_LANGUAGE_EN, TTS_VOICE_EN
 
 
 # ── Text sanitisation ─────────────────────────────────────────────────────────
@@ -134,9 +170,9 @@ _AUDIO_CACHE_MAX = 128
 _audio_cache: dict[str, bytes] = {}
 
 
-def _cache_key(text: str) -> str:
+def _cache_key(text: str, language_code: str, voice_name: str) -> str:
     return hashlib.sha256(
-        f"{TTS_LANGUAGE_CODE}|{TTS_VOICE_NAME}|{TTS_SPEAKING_RATE}|{text}".encode("utf-8")
+        f"{language_code}|{voice_name}|{TTS_SPEAKING_RATE}|{text}".encode("utf-8")
     ).hexdigest()
 
 
@@ -160,6 +196,18 @@ def _get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
+async def warm_up() -> None:
+    """Pre-fetch the ADC access token + build the HTTP client at startup so
+    the first spoken reply doesn't pay the ~1-2s credential-refresh cost.
+    Best-effort: failures are logged, never raised."""
+    try:
+        _get_http_client()
+        await _get_access_token()
+        logger.info("TTS warm-up complete (ADC token cached).")
+    except Exception as e:
+        logger.warning("TTS warm-up skipped: %s", e)
+
+
 async def close_http_client() -> None:
     """Dispose the shared client on app shutdown."""
     global _http_client
@@ -173,9 +221,11 @@ async def close_http_client() -> None:
 
 # ── Core synthesis ────────────────────────────────────────────────────────────
 
-async def _synthesize_once(text: str, token: str, voice_name: Optional[str]) -> bytes:
+async def _synthesize_once(
+    text: str, token: str, language_code: str, voice_name: Optional[str]
+) -> bytes:
     """One REST call to Cloud TTS. Returns MP3 bytes; raises httpx errors."""
-    voice: dict = {"languageCode": TTS_LANGUAGE_CODE, "ssmlGender": "FEMALE"}
+    voice: dict = {"languageCode": language_code, "ssmlGender": "FEMALE"}
     if voice_name:
         voice["name"] = voice_name
 
@@ -202,12 +252,15 @@ async def _synthesize_once(text: str, token: str, voice_name: Optional[str]) -> 
 
 
 async def synthesize_speech(text: str) -> bytes:
-    """Synthesize `text` into MP3 bytes with Ruki's female si-LK voice.
+    """Synthesize `text` into MP3 bytes with the right female Ruki voice.
 
-    Handles mixed Sinhala/English input, caches identical phrases, and retries
-    once WITHOUT the explicit voice name if the named profile is rejected
-    (region rollouts of si-LK voices vary) — the languageCode + FEMALE gender
-    pair then lets Google pick the closest available female Sinhala voice.
+    Language-aware: Sinhala/Tanglish text uses the si-LK female profile
+    (correct Sinhala rendering); pure-English text uses a fluent English
+    female Neural2 profile so English never gets the si-LK accent. Caches
+    identical phrases, and retries once WITHOUT the explicit voice name if
+    the named profile is rejected (regional voice rollouts vary) — the
+    languageCode + FEMALE gender pair then lets Google pick the closest
+    available female voice.
 
     Raises TTSUnavailableError on any failure.
     """
@@ -215,7 +268,9 @@ async def synthesize_speech(text: str) -> bytes:
     if not clean:
         raise TTSUnavailableError("Nothing speakable in the supplied text.")
 
-    key = _cache_key(clean)
+    language_code, voice_name = pick_voice(clean)
+
+    key = _cache_key(clean, language_code, voice_name)
     cached = _audio_cache.get(key)
     if cached is not None:
         return cached
@@ -223,17 +278,17 @@ async def synthesize_speech(text: str) -> bytes:
     token = await _get_access_token()
 
     try:
-        audio = await _synthesize_once(clean, token, TTS_VOICE_NAME)
+        audio = await _synthesize_once(clean, token, language_code, voice_name)
     except httpx.HTTPStatusError as e:
         body = e.response.text[:400]
-        if e.response.status_code in (400, 404) and TTS_VOICE_NAME:
+        if e.response.status_code in (400, 404) and voice_name:
             # Named voice not available — fall back to gender+locale selection.
             logger.warning(
                 "Voice '%s' rejected (%s). Retrying with gender-only selection. Body: %s",
-                TTS_VOICE_NAME, e.response.status_code, body,
+                voice_name, e.response.status_code, body,
             )
             try:
-                audio = await _synthesize_once(clean, token, None)
+                audio = await _synthesize_once(clean, token, language_code, None)
             except Exception as e2:
                 raise TTSUnavailableError(f"Cloud TTS synthesis failed: {e2}") from e2
         elif e.response.status_code == 403:

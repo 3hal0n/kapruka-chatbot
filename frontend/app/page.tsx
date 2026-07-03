@@ -2,11 +2,10 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Gift, Camera, PersonStanding } from "lucide-react";
+import { Gift } from "lucide-react";
 
 import { RightCart, CartItem } from "@/components/RightCart";
 import { GroupGiftModal } from "@/components/GroupGiftModal";
-import { CheckoutModal, CheckoutDetails, CheckoutResult, CheckoutPrefill } from "@/components/CheckoutModal";
 import { Product, kaprukaBuyUrl } from "@/components/ProductCard";
 import { AnimatedAIChat, Message as ChatMessage } from "@/components/ui/animated-ai-chat";
 import { AccessibilityLayer } from "@/components/AccessibilityLayer";
@@ -59,11 +58,6 @@ export default function RukiPage() {
   const [isGroupGiftModalOpen, setIsGroupGiftModalOpen] = useState(false);
   const [groupGiftLink, setGroupGiftLink] = useState("");
 
-  // ── Checkout (real order creation via /api/order)
-  const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const [checkoutPrefill, setCheckoutPrefill] = useState<CheckoutPrefill | undefined>(undefined);
-  const [checkoutAutoResult, setCheckoutAutoResult] = useState<CheckoutResult | undefined>(undefined);
-
   // ── Gift Box Builder
   const [giftBoxItems, setGiftBoxItems] = useState<CartItem[]>([]);
   const [flyingItems, setFlyingItems] = useState<FlyingItem[]>([]);
@@ -71,7 +65,6 @@ export default function RukiPage() {
 
   // ── Input & Voice toggles
   const [language, setLanguage] = useState("English");
-  const [isMicActive, setIsMicActive] = useState(false);
   const [isAudioActive, setIsAudioActive] = useState(false);
 
   // ── Accessibility (hands-free) Voice Assistant Mode
@@ -175,63 +168,6 @@ export default function RukiPage() {
     return () => clearTimeout(t);
   }, [cart, isSignedIn, authHeaders]);
 
-  // ── Speech Transcription Web Speech API (inline mic on the chat input)
-  const recognitionRef = useRef<any>(null);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const rec = new SpeechRecognition();
-        rec.continuous = true;
-        rec.interimResults = false;
-        rec.lang = "en-US";
-
-        rec.onresult = (event: any) => {
-          const text = event.results[event.results.length - 1][0].transcript;
-          if (text) {
-            // Append transcribed text
-            const chatInputEl = document.getElementById("chat-input-text") as HTMLTextAreaElement;
-            if (chatInputEl) {
-              const value = chatInputEl.value;
-              chatInputEl.value = (value ? value + " " : "") + text.trim();
-              const event = new Event('input', { bubbles: true });
-              chatInputEl.dispatchEvent(event);
-            }
-          }
-        };
-
-        rec.onerror = () => setIsMicActive(false);
-        rec.onend = () => setIsMicActive(false);
-        recognitionRef.current = rec;
-      }
-    }
-  }, []);
-
-  const handleStartRecording = () => {
-    if (!recognitionRef.current) {
-      alert("Speech recognition is not supported in this browser. Please use Chrome or Edge.");
-      return;
-    }
-    if (isMicActive) return;
-    try {
-      recognitionRef.current.start();
-      setIsMicActive(true);
-    } catch {
-      // already active
-    }
-  };
-
-  const handleStopRecording = () => {
-    if (!recognitionRef.current) return;
-    try {
-      recognitionRef.current.stop();
-    } catch {
-      // not running
-    }
-    setIsMicActive(false);
-  };
-
   // ── Load Chat History on mount
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -301,47 +237,17 @@ export default function RukiPage() {
   const delivery = cart.length > 0 ? deliveryFee : 0;
   const total = subtotal + delivery;
 
-  // Escape hatch: open each cart item's real Kapruka product page directly,
-  // for when the user would rather complete checkout on Kapruka's own site.
-  const handleOpenProductPages = () => {
-    if (cart.length === 0) return;
-    cart.forEach((item, idx) => {
+  // "Buy on Kapruka": checkout happens on Kapruka's own site — we simply open
+  // each cart item's real Kapruka product page (staggered so popup blockers
+  // treat them as one user gesture). `items` defaults to the current cart;
+  // the SSE handler passes a fresh snapshot to dodge batched-state staleness.
+  const handleOpenProductPages = (items?: CartItem[]) => {
+    const list = items ?? cart;
+    if (list.length === 0) return;
+    list.forEach((item, idx) => {
       const url = item.url || `https://www.kapruka.com/buyonline/${item.name.toLowerCase().replace(/ /g, "-")}/kid/${item.id.toLowerCase()}`;
       setTimeout(() => window.open(url, "_blank", "noopener,noreferrer"), idx * 120);
     });
-  };
-
-  // Places a real order via the backend's kapruka_create_order MCP tool —
-  // this is what actually adds the cart to Kapruka's system, unlike opening
-  // product pages (which requires the user to manually re-add everything).
-  // `cartOverride` lets the SSE handler pass a freshly-computed snapshot
-  // instead of relying on the (possibly stale/batched) `cart` state.
-  const submitOrder = async (details: CheckoutDetails, cartOverride?: CartItem[]): Promise<CheckoutResult> => {
-    const orderCart = cartOverride ?? cart;
-    const headers = await authHeaders();
-    const res = await fetch(`${BACKEND_URL}/api/order`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...headers },
-      body: JSON.stringify({
-        user_id: userIdRef.current,
-        cart: orderCart.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity, image_url: i.image_url })),
-        recipient_name: details.recipientName,
-        delivery_address: details.deliveryAddress,
-        contact_number: details.contactNumber,
-        city: details.city,
-        gift_message: details.giftMessage,
-      }),
-    });
-    const data = await res.json();
-    if (data.status === "success") {
-      setCart([]);
-    }
-    return {
-      status: data.status === "success" ? "success" : data.status === "no_link" ? "no_link" : "error",
-      checkoutUrl: data.checkout_url ?? null,
-      orderId: data.order_id ?? null,
-      message: data.message || "Order submitted.",
-    };
   };
 
   // ── Clear history
@@ -584,37 +490,9 @@ export default function RukiPage() {
               }
 
               if (p.trigger_checkout && mergedCart.length > 0) {
-                const details: CheckoutDetails = {
-                  recipientName: p.recipient_name || "",
-                  deliveryAddress: p.delivery_address || "",
-                  contactNumber: p.contact_number || "",
-                  city: "Colombo",
-                  giftMessage: p.gift_message || undefined,
-                };
-                const hasAllRequired = details.recipientName && details.deliveryAddress && details.contactNumber;
-                if (hasAllRequired) {
-                  // Ruki already extracted everything needed conversationally —
-                  // place the real order immediately instead of opening a form.
-                  submitOrder(details, mergedCart).then((res) => {
-                    setCheckoutAutoResult(res);
-                    setCheckoutPrefill(undefined);
-                    setCheckoutOpen(true);
-                    if (res.status === "success" && res.checkoutUrl) {
-                      window.open(res.checkoutUrl, "_blank", "noopener,noreferrer");
-                    }
-                  });
-                } else {
-                  // Missing a field (e.g. no phone number given) — open the
-                  // form pre-filled with whatever was captured in chat.
-                  setCheckoutAutoResult(undefined);
-                  setCheckoutPrefill({
-                    recipientName: details.recipientName || undefined,
-                    deliveryAddress: details.deliveryAddress || undefined,
-                    contactNumber: details.contactNumber || undefined,
-                    giftMessage: details.giftMessage,
-                  });
-                  setCheckoutOpen(true);
-                }
+                // Checkout happens on Kapruka's own site — open the items'
+                // real product pages (fresh snapshot, not batched state).
+                setTimeout(() => handleOpenProductPages(mergedCart), 400);
               }
               setCurrentStatus(null);
               setIsTyping(false);
@@ -802,8 +680,9 @@ export default function RukiPage() {
                 Box is full!{" "}
                 <button
                   onClick={() => {
-                    // Gift Box items live in a separate staging area — merge them
-                    // into the real cart so they're actually part of the order.
+                    // Gift Box items live in a separate staging area — merge
+                    // them into the real cart, then open the cart drawer so
+                    // the user reviews and buys on Kapruka from there.
                     setCart(prev => {
                       let next = prev;
                       giftBoxItems.forEach(boxItem => {
@@ -814,9 +693,7 @@ export default function RukiPage() {
                       });
                       return next;
                     });
-                    setCheckoutAutoResult(undefined);
-                    setCheckoutPrefill(undefined);
-                    setCheckoutOpen(true);
+                    setRightOpen(true);
                   }}
                   className="underline underline-offset-2 cursor-pointer hover:text-amber/80 transition-colors"
                 >
@@ -833,9 +710,7 @@ export default function RukiPage() {
         <AnimatedAIChat
           messages={chatMessages}
           onSendMessage={handleSendMessage}
-          isRecording={isMicActive}
-          onStartRecording={handleStartRecording}
-          onStopRecording={handleStopRecording}
+          onOpenVoiceMode={() => setAccessibilityOpen(true)}
           sidebarOpen={leftOpen}
           onToggleSidebar={() => setLeftOpen(!leftOpen)}
           chatHistory={chatHistory}
@@ -858,29 +733,6 @@ export default function RukiPage() {
           ) : undefined}
         />
 
-        {/* Floating multimodal controls: photo search + hands-free voice mode.
-            Hidden while the voice panel is open — it docks in the same corner
-            band and carries its own close control. */}
-        {!accessibilityOpen && (
-        <div className="pointer-events-none absolute bottom-28 right-4 z-40 flex flex-col gap-3">
-          <button
-            onClick={() => imageInputRef.current?.click()}
-            aria-label="Search by photo — upload a product picture"
-            title="Search by photo"
-            className="pointer-events-auto grid h-12 w-12 cursor-pointer place-items-center rounded-full border border-border bg-surface text-foreground shadow-lg transition-all hover:scale-105 hover:bg-primary hover:text-primary-foreground"
-          >
-            <Camera className="h-5 w-5" aria-hidden="true" />
-          </button>
-          <button
-            onClick={() => setAccessibilityOpen(true)}
-            aria-label="Open hands-free voice assistant mode"
-            title="Hands-free voice mode"
-            className="pointer-events-auto grid h-12 w-12 cursor-pointer place-items-center rounded-full border border-border bg-surface text-foreground shadow-lg transition-all hover:scale-105 hover:bg-primary hover:text-primary-foreground"
-          >
-            <PersonStanding className="h-5 w-5" aria-hidden="true" />
-          </button>
-        </div>
-        )}
         <input
           ref={imageInputRef}
           type="file"
@@ -900,23 +752,10 @@ export default function RukiPage() {
         total={total}
         updateQuantity={updateQuantity}
         onRemoveItem={handleRemoveFromCart}
-        onCheckout={() => { setCheckoutAutoResult(undefined); setCheckoutPrefill(undefined); setCheckoutOpen(true); }}
+        onCheckout={() => handleOpenProductPages()}
         open={rightOpen}
         onClose={() => setRightOpen(false)}
         onGroupGift={handleGroupGift}
-      />
-
-      <CheckoutModal
-        open={checkoutOpen}
-        onClose={() => setCheckoutOpen(false)}
-        cart={cart}
-        subtotal={subtotal}
-        delivery={delivery}
-        total={total}
-        prefill={checkoutPrefill}
-        autoResult={checkoutAutoResult}
-        onSubmit={submitOrder}
-        onOpenProductPages={handleOpenProductPages}
       />
 
       <GroupGiftModal

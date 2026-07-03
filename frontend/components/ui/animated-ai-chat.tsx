@@ -3,7 +3,7 @@
 import * as React from "react";
 import {
   ArrowUp,
-  Paperclip,
+  Camera,
   Mic,
   X,
   Menu,
@@ -42,9 +42,8 @@ export interface Message {
 interface AnimatedAIChatProps {
   messages?: Message[];
   onSendMessage?: (content: string) => void;
-  isRecording?: boolean;
-  onStartRecording?: () => void;
-  onStopRecording?: () => void;
+  /** Opens the hands-free voice assistant overlay (mic button in the input bar). */
+  onOpenVoiceMode?: () => void;
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
   chatHistory?: { id: string; title: string; date: string }[];
@@ -127,7 +126,8 @@ function ThinkingIndicator({ status }: { status?: string | null }) {
   const [idx, setIdx] = React.useState(0);
 
   React.useEffect(() => {
-    const t = setInterval(() => setIdx((p) => (p + 1) % THINKING_PHRASES.length), 1900);
+    // Slow, calm rotation — rapid phrase swapping reads as jittery noise.
+    const t = setInterval(() => setIdx((p) => (p + 1) % THINKING_PHRASES.length), 5000);
     return () => clearInterval(t);
   }, []);
 
@@ -193,9 +193,7 @@ const isNoMatchesOrError = (msg: Message): boolean => {
 export function AnimatedAIChat({
   messages = [],
   onSendMessage,
-  isRecording = false,
-  onStartRecording,
-  onStopRecording,
+  onOpenVoiceMode,
   sidebarOpen = false,
   onToggleSidebar,
   chatHistory = [],
@@ -310,11 +308,11 @@ export function AnimatedAIChat({
           onClick={() => onAttachImage?.()}
           disabled={!onAttachImage}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
-          title="Attach a photo to search"
-          aria-label="Attach a photo to search"
+          title="Search by photo"
+          aria-label="Search by photo — upload a product picture"
           type="button"
         >
-          <Paperclip className="h-4 w-4" />
+          <Camera className="h-4 w-4" />
         </button>
 
         <textarea
@@ -346,19 +344,12 @@ export function AnimatedAIChat({
           </button>
 
           <button
-            onMouseDown={onStartRecording}
-            onMouseUp={onStopRecording}
-            onMouseLeave={onStopRecording}
-            onTouchStart={onStartRecording}
-            onTouchEnd={onStopRecording}
+            onClick={() => onOpenVoiceMode?.()}
+            disabled={!onOpenVoiceMode}
             type="button"
-            className={`flex h-9 w-9 touch-none select-none items-center justify-center rounded-full transition-colors cursor-pointer ${
-              isRecording
-                ? "bg-red-500 text-white animate-pulse"
-                : "text-muted-foreground hover:bg-primary-soft hover:text-foreground"
-            }`}
-            title="Hold to record voice transcription"
-            aria-label="Hold to talk"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+            title="Hands-free voice mode"
+            aria-label="Open hands-free voice assistant"
           >
             <Mic className="h-4 w-4" />
           </button>

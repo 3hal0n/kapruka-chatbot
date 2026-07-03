@@ -34,6 +34,9 @@ let activeAudio: HTMLAudioElement | null = null;
 let activeObjectUrl: string | null = null;
 let activeOnEnd: (() => void) | null = null;
 let endFired = false;
+// Generation counter: every new speak/stop invalidates the async continuations
+// (pending fetches, queued chunks) of the previous one.
+let generation = 0;
 
 function fireEndOnce() {
   if (endFired) return;
@@ -63,6 +66,7 @@ function releaseAudio() {
 
 /** Stop whatever Ruki is currently saying (backend audio AND browser synth). */
 export function stopSpeech(): void {
+  generation++; // invalidate any in-flight chunk fetch/playback chain
   releaseAudio();
   if (typeof window !== "undefined" && window.speechSynthesis) {
     window.speechSynthesis.cancel();
@@ -116,6 +120,62 @@ function speakWithBrowser(text: string, callbacks: SpeakCallbacks): boolean {
   return true;
 }
 
+// ── Chunked synthesis for latency ─────────────────────────────────────────────
+
+/**
+ * Split long replies into [first sentence(s), remainder] so the opening audio
+ * starts playing while the (bigger) remainder is still being synthesized —
+ * this is where most of the perceived "voice takes too long" latency went.
+ */
+function splitForLatency(text: string): string[] {
+  if (text.length < 180) return [text];
+  const window = text.slice(0, 260);
+  let cut = -1;
+  for (const stop of [". ", "! ", "? ", "। ", "; "]) {
+    const idx = window.indexOf(stop, 40);
+    if (idx !== -1 && (cut === -1 || idx < cut)) cut = idx + stop.length - 1;
+  }
+  if (cut === -1) return [text];
+  const head = text.slice(0, cut).trim();
+  const tail = text.slice(cut).trim();
+  return tail ? [head, tail] : [head];
+}
+
+async function fetchTTSUrl(text: string): Promise<string> {
+  const res = await fetch(`${BACKEND_URL}/api/tts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) throw new Error(`TTS backend ${res.status}`);
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+/** Play one blob URL; resolves true on natural end, rejects on decode error. */
+function playUrl(url: string, gen: number, onStart?: () => void): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    if (gen !== generation) {
+      URL.revokeObjectURL(url);
+      resolve(false);
+      return;
+    }
+    const audio = new Audio(url);
+    activeAudio = audio;
+    activeObjectUrl = url;
+    audio.onplay = () => onStart?.();
+    audio.onended = () => {
+      releaseAudio();
+      resolve(true);
+    };
+    audio.onerror = () => {
+      releaseAudio();
+      reject(new Error("audio decode/playback failed"));
+    };
+    audio.play().catch(reject);
+  });
+}
+
 // ── Main entry point ──────────────────────────────────────────────────────────
 
 /**
@@ -132,6 +192,7 @@ export async function speakText(
   // Cancel anything in flight (this also fires the previous onEnd once).
   stopSpeech();
 
+  const gen = ++generation;
   endFired = false;
   activeOnEnd = callbacks.onEnd ?? null;
 
@@ -140,35 +201,41 @@ export async function speakText(
     return false;
   }
 
-  // ── Primary: backend Google Cloud TTS (female si-LK, Sinhala-capable) ──
+  // ── Primary: backend Google Cloud TTS (language-aware female voice) ──
+  // Both chunks are requested CONCURRENTLY; chunk 1 starts playing as soon as
+  // it lands while chunk 2 finishes synthesizing in the background.
+  const chunks = splitForLatency(clean);
+  const pending = chunks.map(c => fetchTTSUrl(c));
+  let started = false;
+
   try {
-    const res = await fetch(`${BACKEND_URL}/api/tts`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: clean }),
-    });
-    if (!res.ok) throw new Error(`TTS backend ${res.status}`);
-
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    activeAudio = audio;
-    activeObjectUrl = url;
-
-    audio.onplay = () => callbacks.onStart?.();
-    audio.onended = () => {
-      releaseAudio();
-      fireEndOnce();
-    };
-    audio.onerror = () => {
-      releaseAudio();
-      fireEndOnce();
-    };
-
-    await audio.play();
+    for (let i = 0; i < pending.length; i++) {
+      const url = await pending[i];
+      if (gen !== generation) {
+        URL.revokeObjectURL(url);
+        return true; // superseded by a newer speak/stop
+      }
+      const finished = await playUrl(url, gen, () => {
+        if (!started) {
+          started = true;
+          callbacks.onStart?.();
+        }
+      });
+      if (!finished || gen !== generation) return true;
+    }
+    fireEndOnce();
     return true;
   } catch {
+    if (gen !== generation) return true;
     releaseAudio();
+    // Clean up any remaining fetched-but-unplayed chunk URLs.
+    pending.forEach(p => p.then(u => URL.revokeObjectURL(u)).catch(() => {}));
+    // If part of the reply already played, don't re-speak from the start with
+    // the browser voice — just end the turn cleanly.
+    if (started) {
+      fireEndOnce();
+      return true;
+    }
     // ── Fallback: browser-native synthesis so Ruki is never mute ──
     if (speakWithBrowser(clean, callbacks)) return true;
     fireEndOnce();

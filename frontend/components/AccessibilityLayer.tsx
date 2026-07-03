@@ -80,14 +80,41 @@ export function AccessibilityLayer({
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [transcript, setTranscript] = useState("");
   const [supported, setSupported] = useState(true);
+  // Mic language: the Web Speech recognizer transcribes ONE language at a
+  // time — "mata cake ekak oni" through en-US becomes "butter cake peacock
+  // hone". The toggle switches the recognizer to si-LK for Sinhala speakers.
+  const [voiceLang, setVoiceLang] = useState<"en-US" | "si-LK">("en-US");
 
   const recognitionRef = useRef<any>(null);
   const phaseRef = useRef<VoicePhase>("idle");
   const openRef = useRef(open);
   const spokenRef = useRef<string>("");
+  const voiceLangRef = useRef(voiceLang);
+  // Always call the LATEST onSubmit: the recognition engine is created once
+  // on mount, and binding onSubmit directly into its onresult would freeze
+  // the first render's handler (whose chat-history closure is the EMPTY
+  // initial array — submitting through it wiped the whole conversation).
+  const onSubmitRef = useRef(onSubmit);
 
   phaseRef.current = phase;
   openRef.current = open;
+  voiceLangRef.current = voiceLang;
+  onSubmitRef.current = onSubmit;
+
+  // Restore the user's preferred mic language.
+  useEffect(() => {
+    const stored = typeof window !== "undefined" && localStorage.getItem("ruki_voice_lang");
+    if (stored === "si-LK" || stored === "en-US") setVoiceLang(stored);
+  }, []);
+
+  const switchVoiceLang = (lang: "en-US" | "si-LK") => {
+    setVoiceLang(lang);
+    try {
+      localStorage.setItem("ruki_voice_lang", lang);
+    } catch {
+      /* storage unavailable */
+    }
+  };
 
   // ── Speech-to-text engine ───────────────────────────────────────────────────
   useEffect(() => {
@@ -98,7 +125,7 @@ export function AccessibilityLayer({
     }
     rec.continuous = false;
     rec.interimResults = false;
-    rec.lang = "en-US"; // adaptable to localized parameters dynamically
+    rec.lang = voiceLangRef.current; // re-read per start in startListening
 
     rec.onresult = (event: any) => {
       const currentResult = event.results[0][0].transcript?.trim();
@@ -107,7 +134,8 @@ export function AccessibilityLayer({
         setPhase("thinking");
         // Routes through the SAME path as typed input — the transcript is
         // appended to chat history and the reply streams into the chat log.
-        onSubmit(currentResult);
+        // Via the ref so we always hit the latest handler (see onSubmitRef).
+        onSubmitRef.current(currentResult);
       } else {
         setPhase("idle");
       }
@@ -137,6 +165,7 @@ export function AccessibilityLayer({
     // mic never captures her own voice.
     stopSpeech();
     try {
+      rec.lang = voiceLangRef.current;
       rec.start();
       setTranscript("");
       setPhase("listening");
@@ -211,7 +240,7 @@ export function AccessibilityLayer({
     idle: "text-muted-foreground",
     listening: "text-primary-vivid",
     thinking: "text-muted-foreground",
-    speaking: "text-emerald-500",
+    speaking: "text-amber",
   };
 
   return (
@@ -253,7 +282,7 @@ export function AccessibilityLayer({
               <div className="flex items-center gap-2.5">
                 <FrequencyBars
                   active={phase === "listening" || phase === "speaking"}
-                  color={phase === "speaking" ? "bg-emerald-500" : "bg-primary-vivid"}
+                  color={phase === "speaking" ? "bg-amber" : "bg-primary-vivid"}
                 />
                 <p
                   aria-live="polite"
@@ -264,7 +293,7 @@ export function AccessibilityLayer({
                     : "Voice needs Chrome or Edge"}
                 </p>
                 {phase === "speaking" && (
-                  <Volume2 className="h-4 w-4 shrink-0 text-emerald-500" aria-hidden="true" />
+                  <Volume2 className="h-4 w-4 shrink-0 text-amber" aria-hidden="true" />
                 )}
               </div>
               <p className="mt-0.5 truncate text-[11px] font-medium text-muted-foreground">
@@ -274,6 +303,30 @@ export function AccessibilityLayer({
                   "Hands-free mode — replies read aloud, chat stays live below"
                 )}
               </p>
+            </div>
+
+            {/* Mic language — the recognizer transcribes one language at a
+                time; Sinhala speakers flip to සිං for accurate capture. */}
+            <div
+              role="group"
+              aria-label="Microphone language"
+              className="flex shrink-0 overflow-hidden rounded-full border border-border"
+            >
+              {([["en-US", "EN"], ["si-LK", "සිං"]] as const).map(([code, label]) => (
+                <button
+                  key={code}
+                  onClick={() => switchVoiceLang(code)}
+                  aria-pressed={voiceLang === code}
+                  aria-label={code === "en-US" ? "Listen in English" : "Listen in Sinhala"}
+                  className={`px-2.5 py-1.5 text-[11px] font-black transition-colors cursor-pointer ${
+                    voiceLang === code
+                      ? "bg-primary-vivid text-primary-foreground"
+                      : "bg-transparent text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
 
             {/* Exit voice mode */}

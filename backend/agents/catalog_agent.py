@@ -244,6 +244,46 @@ def calculate_match_score(product: dict, search_query: str, preferences: set, bu
     return min(score, 99)
 
 
+# ── Deterministic reply-language detection ────────────────────────────────────
+# The LLM keeps drifting (English question → Sinhala reply; romanised Tanglish
+# → Sinhala SCRIPT). Detect the user's script/language in Python and inject an
+# explicit directive instead of hoping the prompt rules hold.
+
+_SINHALA_SCRIPT_RE = re.compile(r"[඀-෿]")
+_ROMANIZED_SINHALA_RE = re.compile(
+    r"\b(?:mata|oyata|apita|mage|oyage|ekak|ekata|ekath|oni|onee|aiyo|aney|"
+    r"machan|puluwan|puluwanda|hadiyak|thiyenawa|thiyenawada|ganna|gannawa|"
+    r"karanna|denna|hoyanna|balanna|hoda|hodai|lassana|supiri|amma|thaththa|"
+    r"akka|malli|nangi|ayya|kade|gedara|salli|mokada|kohomada|wage|ehenam|"
+    r"naththam|nathnam|walata|walatada|kiyala|kiala|innawa|inne|yanna|enna|"
+    r"badu|genna|eya|eyata|eyage|kenek|kenekta|wayasa|hithuwa|deyak|dunnoth|"
+    r"denna|mn|mata)\b",
+    re.IGNORECASE,
+)
+
+
+def _reply_language_directive(user_raw_message: str) -> str:
+    """One unambiguous instruction line for the reply language/script."""
+    msg = user_raw_message or ""
+    if _SINHALA_SCRIPT_RE.search(msg):
+        return (
+            "REQUIRED REPLY LANGUAGE: SINHALA SCRIPT — the user typed native "
+            "Sinhala script, so reply fully in Sinhala script."
+        )
+    if _ROMANIZED_SINHALA_RE.search(msg):
+        return (
+            "REQUIRED REPLY LANGUAGE: TANGLISH IN LATIN LETTERS ONLY — the user "
+            "typed romanised Sinhala (Latin alphabet). Reply in that same casual "
+            "romanised Sinhala + English mix. Do NOT use a single Sinhala script "
+            "character (ය, ම, ඔ...) anywhere in the reply."
+        )
+    return (
+        "REQUIRED REPLY LANGUAGE: ENGLISH ONLY — the user's message contains no "
+        "Sinhala. Reply 100% in English with zero Sinhala or romanised-Sinhala "
+        "words, regardless of what language earlier turns used."
+    )
+
+
 def _sanitise_search_query(query: str) -> str:
     """
     Clean a search query before it is sent to the Kapruka MCP server.
@@ -301,6 +341,8 @@ def _sanitise_search_query(query: str) -> str:
         "walata", "welin", "kiyana", "side", "area", "district",
         "deliver", "delivery", "karanna", "puluwanda", "thiyenawa",
         "ekak", "hadanna", "enna", "oni", "wenne", "nehe",
+        # Sinhala "thing/stuff" fillers: "electronic deyak" → "electronic"
+        "deyak", "dewal", "badu", "genna",
         "for", "to", "from", "the", "a", "an",
         # Occasion words that sometimes leak from the router into the search query
         "fathers", "father's", "mothers", "mother's",
@@ -361,6 +403,61 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
         products = []
     else:
         products = [p for p in products if isinstance(p, dict)]
+
+    # ── GENERIC-TECH QUERY EXPANSION ─────────────────────────────────────────
+    # A bare "electronics" keyword search returns storefronts and utilitarian
+    # oddities (mosquito vaporizers, kitchen scales) — terrible for someone
+    # browsing tech or picking a tech gift. Expand into concrete, giftable
+    # tech categories and merge the pools.
+    GENERIC_TECH_TERMS = {
+        "electronic", "electronics", "electronic item", "electronic gift",
+        "gadget", "gadgets", "tech", "tech gift", "tech item",
+    }
+    if search_query.lower().strip() in GENERIC_TECH_TERMS:
+        for eq in ("wireless headphones", "bluetooth speaker", "smart watch"):
+            try:
+                res = await kapruka_search_products(eq, limit=CATALOG_SEARCH_TOP_K)
+                extra = []
+                if isinstance(res, dict):
+                    extra = res.get("products") or res.get("result") or []
+                elif isinstance(res, list):
+                    extra = res
+                products.extend(p for p in extra if isinstance(p, dict))
+            except Exception as e:
+                print(f"[TechExpansion] Query '{eq}' failed: {e}")
+        seen_ids: set = set()
+        deduped_pool: list = []
+        for p in products:
+            pid = p.get("id") or p.get("code") or p.get("name")
+            if pid not in seen_ids:
+                seen_ids.add(pid)
+                deduped_pool.append(p)
+        products = deduped_pool
+        print(f"[TechExpansion] '{search_query}' expanded — pool now {len(products)} products.")
+
+    # ── STOREFRONT / SELLER-CARD FILTER ──────────────────────────────────────
+    # The MCP index contains seller storefront entries ("Dinapala Electronics"
+    # Rs. 140, "Tech Mart") that look like products. Heuristic: a very short
+    # name ending in a store-ish word with a token price is a storefront card,
+    # not a purchasable product.
+    _STOREFRONT_WORDS = {
+        "mart", "store", "stores", "shop", "electronics", "group",
+        "enterprises", "traders", "holdings", "agencies", "distributors",
+    }
+
+    def _looks_like_storefront(p: dict) -> bool:
+        name = str(p.get("name") or "").strip()
+        tokens = name.split()
+        if not tokens or len(tokens) > 4 or any(ch.isdigit() for ch in name):
+            return False
+        if tokens[-1].lower().strip(".,") not in _STOREFRONT_WORDS:
+            return False
+        return parse_product_price(p.get("price")) <= 500
+
+    pre_storefront = len(products)
+    products = [p for p in products if not _looks_like_storefront(p)]
+    if pre_storefront != len(products):
+        print(f"[StorefrontFilter] Dropped {pre_storefront - len(products)} seller-card entr(y/ies).")
 
     # ── ZERO-TRUST PRE-LLM ALLERGEN HARD-STOP ────────────────────────────────
     # This executes immediately after the raw MCP payload is parsed — before
@@ -660,9 +757,12 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
     context_block = "\n".join(context_notes) if context_notes else ""
 
     user_content = (
-        # Include the raw message FIRST so the LLM can detect the user's language
-        # and mirror it exactly — this is the most critical input for language matching.
-        f"User's original message (mirror this language exactly in your reply): {user_raw_message}\n\n"
+        # Deterministic language directive FIRST — computed in Python from the
+        # user's actual script so the model can't drift to the wrong language.
+        f"{_reply_language_directive(user_raw_message)}\n\n"
+        if user_raw_message else ""
+    ) + (
+        f"User's original message: {user_raw_message}\n\n"
         if user_raw_message else ""
     ) + (
         f"{context_block}\n" if context_block else ""

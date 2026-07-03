@@ -86,6 +86,14 @@ async def lifespan(app: FastAPI):
         logger.info("Warmup complete and MCP client initialized. Ready to serve requests.")
     except Exception as e:
         logger.exception(f"Warmup failed: {e}")
+
+    # Pre-warm the Cloud TTS credential in the background (fire-and-forget) so
+    # the first voice reply doesn't pay the ADC token-refresh latency.
+    try:
+        from infrastructure.audio.tts import warm_up
+        asyncio.create_task(warm_up())
+    except Exception as e:
+        logger.warning(f"TTS warm-up not scheduled: {e}")
     yield
     # Shutdown MCP client connection
     try:
