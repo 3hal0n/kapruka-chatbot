@@ -22,6 +22,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Mic, X, Volume2 } from "lucide-react";
+import { speakText, stopSpeech } from "@/lib/ruki-tts";
 
 interface AccessibilityLayerProps {
   open: boolean;
@@ -132,9 +133,9 @@ export function AccessibilityLayer({
   const startListening = useCallback(() => {
     const rec = recognitionRef.current;
     if (!rec || isBusy) return;
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
+    // Silence any in-flight Ruki audio (backend MP3 or browser synth) so the
+    // mic never captures her own voice.
+    stopSpeech();
     try {
       rec.start();
       setTranscript("");
@@ -160,36 +161,38 @@ export function AccessibilityLayer({
   };
 
   // ── Text-to-speech: read each new assistant reply aloud while open ─────────
+  // Primary voice is the backend's Google Cloud TTS (warm female si-LK profile,
+  // handles Sinhala script + Tanglish natively); lib/ruki-tts falls back to
+  // browser synthesis automatically if the backend is unreachable.
   useEffect(() => {
     if (!open || !lastResponse) return;
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
     if (spokenRef.current === lastResponse) return;
     spokenRef.current = lastResponse;
 
-    const cleanText = lastResponse.replace(/<<.*?>>/g, "").replace(/[*_#`]/g, "").trim();
-    if (!cleanText) return;
-
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = "en-US";
-    utterance.rate = 0.95;
-    utterance.onstart = () => setPhase("speaking");
-    utterance.onend = () => {
-      // Hands-free loop: re-open the microphone after Ruki finishes speaking.
-      if (openRef.current) startListening();
-      else setPhase("idle");
-    };
-    utterance.onerror = () => setPhase("idle");
-    window.speechSynthesis.speak(utterance);
+    speakText(lastResponse, {
+      onStart: () => {
+        // Clear the listener instance while Ruki is speaking — the mic must
+        // never capture her own audio and echo it back as a request.
+        try {
+          recognitionRef.current?.abort?.();
+        } catch {
+          /* not running */
+        }
+        setPhase("speaking");
+      },
+      onEnd: () => {
+        // Hands-free loop: the moment playback finishes, re-open the mic.
+        if (openRef.current) startListening();
+        else setPhase("idle");
+      },
+    });
   }, [lastResponse, open, startListening]);
 
   // Reflect backend progress and stop everything when the panel closes.
   useEffect(() => {
     if (!open) {
       stopListening();
-      if (typeof window !== "undefined" && window.speechSynthesis) {
-        window.speechSynthesis.cancel();
-      }
+      stopSpeech();
       setPhase("idle");
       setTranscript("");
       return;

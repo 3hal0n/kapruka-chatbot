@@ -9,7 +9,7 @@ import time
 from typing import Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
@@ -100,6 +100,12 @@ async def lifespan(app: FastAPI):
         await dispose_db()
     except Exception as e:
         logger.warning(f"Error disposing DB: {e}")
+    # Dispose the Cloud TTS HTTP client
+    try:
+        from infrastructure.audio.tts import close_http_client
+        await close_http_client()
+    except Exception as e:
+        logger.warning(f"Error closing TTS client: {e}")
     logger.info("Shutting down lifespan...")
 
 
@@ -596,6 +602,44 @@ async def create_group_gift(request: GroupGiftRequest):
         "item_count": len(request.cart),
         "total": request.total,
     }
+
+
+class TTSRequest(BaseModel):
+    text: str
+
+
+@app.post("/api/tts")
+async def tts_endpoint(request: TTSRequest):
+    """
+    Synthesize Ruki's spoken reply with Google Cloud Text-to-Speech
+    (female si-LK voice — native Sinhala + graceful English, billed to the
+    project's Vertex ADC credentials).
+
+    Returns raw MP3 bytes. On any synthesis failure responds 502 so the
+    frontend falls back to browser-native speech instead of going silent.
+    """
+    if not request.text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Text cannot be empty.",
+        )
+
+    from infrastructure.audio.tts import synthesize_speech, TTSUnavailableError
+
+    try:
+        audio = await synthesize_speech(request.text)
+    except TTSUnavailableError as e:
+        logger.warning(f"TTS synthesis unavailable: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Speech synthesis is temporarily unavailable.",
+        )
+
+    return Response(
+        content=audio,
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/health")

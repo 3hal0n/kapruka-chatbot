@@ -11,6 +11,7 @@ import { Product, kaprukaBuyUrl } from "@/components/ProductCard";
 import { AnimatedAIChat, Message as ChatMessage } from "@/components/ui/animated-ai-chat";
 import { AccessibilityLayer } from "@/components/AccessibilityLayer";
 import { AuthPanel, RukiIdentity } from "@/components/auth/AuthPanel";
+import { speakText, stopSpeech } from "@/lib/ruki-tts";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -248,23 +249,18 @@ export default function RukiPage() {
     }
   }, []);
 
-  // ── Speech Output (TTS)
+  // ── Speech Output (TTS) — routed through the backend Cloud TTS voice
+  // (female si-LK, Sinhala-capable) with automatic browser fallback.
   const speakResponse = (text: string) => {
     // In hands-free mode the AccessibilityLayer speaks every reply itself.
     if (accessibilityOpenRef.current) return;
     if (!isAudioActive) return;
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const cleanText = text.replace(/<<.*?>>/g, "").trim();
-    if (!cleanText) return;
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = "en-US";
-    window.speechSynthesis.speak(utterance);
+    void speakText(text);
   };
 
   useEffect(() => {
-    if (!isAudioActive && !accessibilityOpen && typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
+    if (!isAudioActive && !accessibilityOpen) {
+      stopSpeech();
     }
   }, [isAudioActive, accessibilityOpen]);
 
@@ -492,8 +488,10 @@ export default function RukiPage() {
       localStorage.setItem("ruki_chat_history", JSON.stringify(updatedHistory));
     }
 
-    if (typeof window !== "undefined" && window.speechSynthesis && !accessibilityOpenRef.current) {
-      window.speechSynthesis.cancel();
+    // Interrupt any reply still being read aloud when the user sends a new
+    // message (the hands-free layer manages its own interruptions).
+    if (!accessibilityOpenRef.current) {
+      stopSpeech();
     }
 
     const ctx: Record<string, any> = {};
