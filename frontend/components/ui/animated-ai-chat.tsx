@@ -27,6 +27,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ProductCard, Product } from "@/components/ProductCard";
 import { KaprukaSmileGlow } from "@/components/ui/kapruka-smile-glow";
 import { RukiLogo } from "@/components/ui/logo";
+import { RukiThinkingMark } from "@/components/ui/ruki-thinking";
 
 export interface Message {
   id: string;
@@ -136,16 +137,8 @@ function ThinkingIndicator({ status }: { status?: string | null }) {
   const label = status && status.trim() ? status : `Ruki is ${THINKING_PHRASES[idx]}`;
 
   return (
-    <div className="flex items-center gap-2.5 rounded-2xl border border-border/40 bg-primary-soft/60 px-4 py-3 text-sm text-foreground">
-      <span className="flex items-center gap-1" aria-hidden="true">
-        {[0, 150, 300].map((delay) => (
-          <span
-            key={delay}
-            className="h-1.5 w-1.5 rounded-full bg-primary-vivid animate-bounce"
-            style={{ animationDelay: `${delay}ms` }}
-          />
-        ))}
-      </span>
+    <div className="flex items-center gap-3 rounded-2xl border border-border/40 bg-primary-soft/60 px-4 py-3 text-sm text-foreground">
+      <RukiThinkingMark className="h-7 w-7" />
       <AnimatePresence mode="wait">
         <motion.span
           key={label}
