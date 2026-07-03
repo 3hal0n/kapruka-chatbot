@@ -16,6 +16,10 @@ COPY . .
 ARG NEXT_PUBLIC_API_URL=http://35.200.247.15:8080
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
+# Clerk publishable key (optional — empty keeps the app in guest-only mode).
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+
 RUN npm run build
 
 # Stage 2 — Runner: copy only the production-ready assets.

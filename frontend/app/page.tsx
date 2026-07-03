@@ -1,18 +1,25 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, Gift } from "lucide-react";
+import { Gift, Camera, PersonStanding } from "lucide-react";
 
 import { RightCart, CartItem } from "@/components/RightCart";
 import { GroupGiftModal } from "@/components/GroupGiftModal";
 import { Product, kaprukaBuyUrl } from "@/components/ProductCard";
 import { AnimatedAIChat, Message as ChatMessage } from "@/components/ui/animated-ai-chat";
+import { AccessibilityLayer } from "@/components/AccessibilityLayer";
+import { AuthPanel, RukiIdentity } from "@/components/auth/AuthPanel";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.NEXT_PUBLIC_BACKEND_URL ||
   "http://localhost:8000";
+
+// Clerk is optional: without a publishable key the app runs in guest-only mode
+// exactly as before (no provider, no hooks, no auth headers).
+const CLERK_ENABLED = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
 const generateUserId = () => `ruki_${Math.random().toString(36).substring(2, 10)}`;
 
 interface Message {
@@ -60,6 +67,13 @@ export default function RukiPage() {
   const [isMicActive, setIsMicActive] = useState(false);
   const [isAudioActive, setIsAudioActive] = useState(false);
 
+  // ── Accessibility (hands-free) Voice Assistant Mode
+  const [accessibilityOpen, setAccessibilityOpen] = useState(false);
+  const accessibilityOpenRef = useRef(false);
+  useEffect(() => {
+    accessibilityOpenRef.current = accessibilityOpen;
+  }, [accessibilityOpen]);
+
   // ── Theme — pristine Light Mode by default, switches to Dark
   const [theme, setTheme] = useState<"light" | "dark">("light");
   useEffect(() => {
@@ -67,9 +81,15 @@ export default function RukiPage() {
   }, [theme]);
   const toggleTheme = () => setTheme(p => p === "light" ? "dark" : "light");
 
-  // ── Session ID
+  // ── Session ID — guest id survives sign-out so anonymous chats resume cleanly
   const userIdRef = useRef<string>("");
-  if (!userIdRef.current) userIdRef.current = generateUserId();
+  const guestIdRef = useRef<string>("");
+  if (!guestIdRef.current) guestIdRef.current = generateUserId();
+  if (!userIdRef.current) userIdRef.current = guestIdRef.current;
+
+  // ── Clerk identity — resolved by <AuthPanel/>; guest fallback when disabled
+  const identityRef = useRef<RukiIdentity | null>(null);
+  const [isSignedIn, setIsSignedIn] = useState(false);
 
   // ── Guest label — derived client-side only after mount so the random
   // session id never diverges between the server and client render pass.
@@ -90,7 +110,65 @@ export default function RukiPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [deliveryFee, setDeliveryFee] = useState(350);
 
-  // ── Speech Transcription Web Speech API
+  // ── Vision search upload
+  const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Authenticated fetch headers — attaches the Clerk session JWT when present
+  const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
+    const identity = identityRef.current;
+    if (!identity?.userId) return {};
+    const token = await identity.getToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }, []);
+
+  // ── Identity resolution — switch the whole session to the clerk_id on sign-in
+  const handleIdentity = useCallback((identity: RukiIdentity) => {
+    identityRef.current = identity;
+    if (identity.userId) {
+      setIsSignedIn(true);
+      userIdRef.current = identity.userId;
+      setGuestLabel(identity.label || "Member");
+      const stored = localStorage.getItem(`ruki_chat_messages_${identity.userId}`);
+      setMessages(stored ? JSON.parse(stored) : []);
+      // Hydrate the server-persisted cart (cross-device continuity).
+      identity.getToken().then(token => {
+        if (!token) return;
+        fetch(`${BACKEND_URL}/api/me/cart`, { headers: { Authorization: `Bearer ${token}` } })
+          .then(r => (r.ok ? r.json() : null))
+          .then(d => {
+            if (d?.items?.length) {
+              setCart(prev => (prev.length === 0 ? d.items : prev));
+            }
+          })
+          .catch(() => { /* cart service offline — local cart still works */ });
+      });
+    } else {
+      setIsSignedIn(false);
+      userIdRef.current = guestIdRef.current;
+      syncGuestLabel();
+      const stored = localStorage.getItem(`ruki_chat_messages_${guestIdRef.current}`);
+      setMessages(stored ? JSON.parse(stored) : []);
+    }
+  }, []);
+
+  // ── Persist the cart server-side for signed-in users (debounced)
+  useEffect(() => {
+    if (!isSignedIn) return;
+    const t = setTimeout(async () => {
+      const headers = await authHeaders();
+      if (!headers.Authorization) return;
+      fetch(`${BACKEND_URL}/api/me/cart`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({
+          items: cart.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity, image_url: i.image_url })),
+        }),
+      }).catch(() => { /* best-effort persistence */ });
+    }, 900);
+    return () => clearTimeout(t);
+  }, [cart, isSignedIn, authHeaders]);
+
+  // ── Speech Transcription Web Speech API (inline mic on the chat input)
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
@@ -155,7 +233,7 @@ export default function RukiPage() {
       if (storedHistory) {
         setChatHistory(JSON.parse(storedHistory));
       }
-      
+
       // Load current messages — otherwise leave empty so the hero landing view shows
       const storedMessages = localStorage.getItem(`ruki_chat_messages_${userIdRef.current}`);
       if (storedMessages) {
@@ -166,6 +244,8 @@ export default function RukiPage() {
 
   // ── Speech Output (TTS)
   const speakResponse = (text: string) => {
+    // In hands-free mode the AccessibilityLayer speaks every reply itself.
+    if (accessibilityOpenRef.current) return;
     if (!isAudioActive) return;
     if (typeof window === "undefined" || !window.speechSynthesis) return;
     window.speechSynthesis.cancel();
@@ -177,10 +257,10 @@ export default function RukiPage() {
   };
 
   useEffect(() => {
-    if (!isAudioActive && typeof window !== "undefined" && window.speechSynthesis) {
+    if (!isAudioActive && !accessibilityOpen && typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
-  }, [isAudioActive]);
+  }, [isAudioActive, accessibilityOpen]);
 
   // ── Cart operations
   const handleAddToCart = (product: Product, quantity?: number) => {
@@ -216,10 +296,11 @@ export default function RukiPage() {
 
   // ── Clear history
   const handleClearHistory = async () => {
-    try { 
-      await fetch(`${BACKEND_URL}/api/reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userIdRef.current }) }); 
+    try {
+      const headers = await authHeaders();
+      await fetch(`${BACKEND_URL}/api/reset`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ user_id: userIdRef.current }) });
     } catch { /* offline */ }
-    
+
     const newMsg: Message = { id: `clear-${Date.now()}`, sender: "ai", text: "History cleared. How can I help you find gifts today?" };
     setMessages([newMsg]);
     localStorage.setItem(`ruki_chat_messages_${userIdRef.current}`, JSON.stringify([newMsg]));
@@ -262,9 +343,10 @@ export default function RukiPage() {
   const handleGroupGift = async () => {
     if (cart.length === 0) return;
     try {
+      const headers = await authHeaders();
       const res = await fetch(`${BACKEND_URL}/api/group-gift/create`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...headers },
         body: JSON.stringify({
           cart: cart.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity, image_url: i.image_url })),
           subtotal,
@@ -279,6 +361,58 @@ export default function RukiPage() {
       setGroupGiftLink(`${window.location.origin}/?group_gift=preview`);
     }
     setIsGroupGiftModalOpen(true);
+  };
+
+  // ── Persist a finished turn to local storage + state
+  const commitMessages = (finalized: Message[]) => {
+    setMessages(finalized);
+    localStorage.setItem(`ruki_chat_messages_${userIdRef.current}`, JSON.stringify(finalized));
+  };
+
+  // ── Multimodal Computer Vision search — photo upload → catalog matches
+  const handleImageSelected = async (file: File) => {
+    if (!file) return;
+    setIsTyping(true);
+    setCurrentStatus("Analysing your photo…");
+
+    const userMsg: Message = { id: `user-${Date.now()}`, sender: "user", text: `📷 Photo search: ${file.name}` };
+    const updatedMessages = [...messages, userMsg];
+    commitMessages(updatedMessages);
+
+    try {
+      const headers = await authHeaders();
+      const form = new FormData();
+      form.append("image", file);
+      const res = await fetch(`${BACKEND_URL}/api/vision/search`, {
+        method: "POST",
+        headers, // no Content-Type — the browser sets the multipart boundary
+        body: form,
+      });
+      if (!res.ok) {
+        const detail = await res.json().then((d) => d.detail).catch(() => null);
+        throw new Error(detail || "Vision search failed");
+      }
+      const data = await res.json();
+      const aiMsg: Message = {
+        id: `ai-${Date.now()}`,
+        sender: "ai",
+        text: data.reply || "Here's what I matched from your photo:",
+        intents: ["SEARCH"],
+        products: data.products?.length ? data.products : undefined,
+      };
+      commitMessages([...updatedMessages, aiMsg]);
+      speakResponse(aiMsg.text);
+    } catch (err) {
+      const text = err instanceof Error && err.message !== "Vision search failed"
+        ? err.message
+        : "Aiyo, I couldn't analyse that photo right now 😅 — please try again in a moment.";
+      const errMsg: Message = { id: `ai-${Date.now()}`, sender: "ai", text, intents: ["SEARCH"], isError: true };
+      commitMessages([...updatedMessages, errMsg]);
+    } finally {
+      setIsTyping(false);
+      setCurrentStatus(null);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
   };
 
   // ── Send message via SSE stream
@@ -304,7 +438,7 @@ export default function RukiPage() {
       localStorage.setItem("ruki_chat_history", JSON.stringify(updatedHistory));
     }
 
-    if (typeof window !== "undefined" && window.speechSynthesis) {
+    if (typeof window !== "undefined" && window.speechSynthesis && !accessibilityOpenRef.current) {
       window.speechSynthesis.cancel();
     }
 
@@ -324,9 +458,10 @@ export default function RukiPage() {
     };
 
     try {
+      const headers = await authHeaders();
       const resp = await fetch(`${BACKEND_URL}/api/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...headers },
         signal: controller.signal,
         body: JSON.stringify({
           user_id: userIdRef.current,
@@ -340,7 +475,7 @@ export default function RukiPage() {
       });
       if (!resp.ok || !resp.body) throw new Error("SSE error");
 
-      const reader = resp.body.getReader(); 
+      const reader = resp.body.getReader();
       const dec = new TextDecoder("utf-8");
       let buf = "", fullText = "", sseIntents: string[] = [], sseProducts: Product[] = [], sseLatency = 0, hasError = false;
       let isCartActionTurn = false;
@@ -350,7 +485,7 @@ export default function RukiPage() {
         if (done) break;
         bumpStall();
         buf += dec.decode(value, { stream: true });
-        const parts = buf.split("\n\n"); 
+        const parts = buf.split("\n\n");
         buf = parts.pop() || "";
         for (const part of parts) {
           if (!part.trim()) continue;
@@ -370,10 +505,10 @@ export default function RukiPage() {
             else if (ev === "status") {
               setCurrentStatus(p.message || "");
             }
-            else if (ev === "text") { 
-              setIsTyping(false); 
-              fullText += p.text || ""; 
-              setStreamedText(fullText); 
+            else if (ev === "text") {
+              setIsTyping(false);
+              fullText += p.text || "";
+              setStreamedText(fullText);
             }
             else if (ev === "product_carousel") {
               if (!isCartActionTurn && (p.type === "[PRODUCT_CAROUSEL_DATA]" || p.products)) {
@@ -398,7 +533,7 @@ export default function RukiPage() {
       }
       const aiText = fullText || (hasError ? "A stream error occurred while fetching catalog items." : "I searched Kapruka but couldn't find matching results.");
       const productsToAttach = isCartActionTurn ? undefined : (sseProducts.length > 0 ? sseProducts : undefined);
-      
+
       const newAiMsg: Message = { id: `ai-${Date.now()}`, sender: "ai", text: aiText, intents: sseIntents, products: productsToAttach, latency: sseLatency, isError: hasError };
       const finalizedMessages = [...updatedMessages, newAiMsg];
       setMessages(finalizedMessages);
@@ -482,8 +617,15 @@ export default function RukiPage() {
     });
   }
 
+  // Latest finished assistant reply — spoken aloud by the AccessibilityLayer.
+  const lastAiText = [...messages].reverse().find(m => m.sender === "ai")?.text || "";
+
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground antialiased font-sans">
+      {/* Clerk session chip — only mounted when a publishable key is configured,
+          because Clerk hooks require the <ClerkProvider> in layout.tsx. */}
+      {CLERK_ENABLED && <AuthPanel onIdentity={handleIdentity} />}
+
       {/* Gift Box Canvas for Gift Box Builder Mode */}
       <AnimatePresence>
         {mode === "Gift Box Builder" && (
@@ -592,26 +734,65 @@ export default function RukiPage() {
           onAddToBox={mode === "Gift Box Builder" ? handleAddToBox : undefined}
           activeMode={mode}
         />
+
+        {/* Floating multimodal controls: photo search + hands-free voice mode */}
+        <div className="pointer-events-none absolute bottom-28 right-4 z-40 flex flex-col gap-3">
+          <button
+            onClick={() => imageInputRef.current?.click()}
+            aria-label="Search by photo — upload a product picture"
+            title="Search by photo"
+            className="pointer-events-auto grid h-12 w-12 cursor-pointer place-items-center rounded-full border border-border bg-surface text-foreground shadow-lg transition-all hover:scale-105 hover:bg-primary hover:text-primary-foreground"
+          >
+            <Camera className="h-5 w-5" aria-hidden="true" />
+          </button>
+          <button
+            onClick={() => setAccessibilityOpen(true)}
+            aria-label="Open hands-free voice assistant mode"
+            title="Hands-free voice mode"
+            className="pointer-events-auto grid h-12 w-12 cursor-pointer place-items-center rounded-full border border-border bg-surface text-foreground shadow-lg transition-all hover:scale-105 hover:bg-primary hover:text-primary-foreground"
+          >
+            <PersonStanding className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/heic"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) handleImageSelected(file);
+          }}
+        />
       </div>
 
-      <RightCart 
-        cart={cart} 
-        subtotal={subtotal} 
-        delivery={delivery} 
-        total={total} 
-        updateQuantity={updateQuantity} 
-        handleCreateOrderLink={handleCreateOrderLink} 
-        open={rightOpen} 
-        onClose={() => setRightOpen(false)} 
-        onGroupGift={handleGroupGift} 
+      <RightCart
+        cart={cart}
+        subtotal={subtotal}
+        delivery={delivery}
+        total={total}
+        updateQuantity={updateQuantity}
+        handleCreateOrderLink={handleCreateOrderLink}
+        open={rightOpen}
+        onClose={() => setRightOpen(false)}
+        onGroupGift={handleGroupGift}
       />
 
-      <GroupGiftModal 
-        open={isGroupGiftModalOpen} 
-        onClose={() => setIsGroupGiftModalOpen(false)} 
-        shareUrl={groupGiftLink} 
-        cart={cart} 
-        total={total} 
+      <GroupGiftModal
+        open={isGroupGiftModalOpen}
+        onClose={() => setIsGroupGiftModalOpen(false)}
+        shareUrl={groupGiftLink}
+        cart={cart}
+        total={total}
+      />
+
+      {/* Hands-free / low-vision Voice Assistant Mode */}
+      <AccessibilityLayer
+        open={accessibilityOpen}
+        onClose={() => setAccessibilityOpen(false)}
+        onSubmit={handleSendMessage}
+        isBusy={isTyping || !!streamedText}
+        lastResponse={lastAiText}
       />
 
       {/* Flying thumbnail animations for Gift Box Builder */}
