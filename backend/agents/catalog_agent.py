@@ -485,6 +485,33 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
             except Exception as e:
                 print(f"Fallback query '{fq}' failed: {e}")
 
+    # ── CATEGORY FIDELITY FILTER ─────────────────────────────────────────────
+    # Kapruka's keyword search matches "flowers" against anything with the word
+    # in its title — including "Flower Ribbon Cake". When the user explicitly
+    # named a category, purge products from a conflicting category. Never
+    # filters down to an empty list (better off-category than nothing).
+    CATEGORY_CONFLICTS: list[tuple[set, set]] = [
+        # user asked for →       must not show
+        ({"flower", "flowers", "rose", "roses", "bouquet"}, {"cake", "cakes"}),
+        # For cake queries only ban unambiguous flower products (bouquets) —
+        # flower-DECORATED cakes ("Fresh Flowers Cake") are valid cake results.
+        ({"cake", "cakes"}, {"bouquet"}),
+    ]
+    _sq_tokens = set(re.findall(r"[a-z]+", search_query.lower()))
+    for _wanted, _banned in CATEGORY_CONFLICTS:
+        if (_sq_tokens & _wanted) and not (_sq_tokens & _banned):
+            def _off_category(p: dict, banned=_banned) -> bool:
+                hay = f"{p.get('name') or ''} {p.get('category') or ''}".lower()
+                return any(b in hay for b in banned)
+
+            _kept = [p for p in products if not _off_category(p)]
+            if _kept and len(_kept) < len(products):
+                print(
+                    f"[CategoryFidelity] Dropped {len(products) - len(_kept)} "
+                    f"off-category product(s) for query '{search_query}'."
+                )
+                products = _kept
+
     if not products:
         yield "Sorry! I couldn't find any products matching your description on Kapruka right now."
         return
