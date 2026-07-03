@@ -3,10 +3,8 @@
 import * as React from "react";
 import {
   ArrowUp,
-  Paperclip,
+  Camera,
   Mic,
-  Volume2,
-  VolumeX,
   X,
   Menu,
   History,
@@ -29,6 +27,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ProductCard, Product } from "@/components/ProductCard";
 import { KaprukaSmileGlow } from "@/components/ui/kapruka-smile-glow";
 import { RukiLogo } from "@/components/ui/logo";
+import { RukiThinkingMark } from "@/components/ui/ruki-thinking";
 
 export interface Message {
   id: string;
@@ -44,15 +43,14 @@ export interface Message {
 interface AnimatedAIChatProps {
   messages?: Message[];
   onSendMessage?: (content: string) => void;
-  isRecording?: boolean;
-  onStartRecording?: () => void;
-  onStopRecording?: () => void;
-  isAudioMuted?: boolean;
-  onToggleMute?: () => void;
+  /** Opens the hands-free voice assistant overlay (mic button in the input bar). */
+  onOpenVoiceMode?: () => void;
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
   chatHistory?: { id: string; title: string; date: string }[];
   onSelectHistoryItem?: (id: string) => void;
+  onDeleteHistoryItem?: (id: string) => void;
+  activeChatId?: string;
   onStartNewChat?: () => void;
   introComponent?: React.ReactNode;
 
@@ -68,7 +66,24 @@ interface AnimatedAIChatProps {
   onAddToCart?: (product: Product) => void;
   onAddToBox?: (product: Product, rect: DOMRect) => void;
   activeMode?: string;
+
+  // Multimodal + quick-start controls in the input bar
+  onAttachImage?: () => void;
+  suggestions?: string[];
+
+  /** Renders in place of the static guest card in the sidebar's session slot
+   *  (e.g. Clerk sign-in / user-management). Receives whether the rail is
+   *  currently collapsed to icon-only width. Falls back to the plain guest
+   *  card when omitted (guest-only deployments). */
+  authSlot?: (collapsed: boolean) => React.ReactNode;
 }
+
+const DEFAULT_SUGGESTIONS = [
+  "What's trending for someone who loves tech?",
+  "I need groceries for the week",
+  "Find a birthday gift under Rs. 3000",
+  "Track my last order",
+];
 
 // Ruki quick-start suggestions — mirrors the Kapruka gifting shortcuts
 const SUGGESTION_PILLS: { label: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -112,7 +127,8 @@ function ThinkingIndicator({ status }: { status?: string | null }) {
   const [idx, setIdx] = React.useState(0);
 
   React.useEffect(() => {
-    const t = setInterval(() => setIdx((p) => (p + 1) % THINKING_PHRASES.length), 1900);
+    // Slow, calm rotation — rapid phrase swapping reads as jittery noise.
+    const t = setInterval(() => setIdx((p) => (p + 1) % THINKING_PHRASES.length), 5000);
     return () => clearInterval(t);
   }, []);
 
@@ -121,16 +137,8 @@ function ThinkingIndicator({ status }: { status?: string | null }) {
   const label = status && status.trim() ? status : `Ruki is ${THINKING_PHRASES[idx]}`;
 
   return (
-    <div className="flex items-center gap-2.5 rounded-2xl border border-border/40 bg-primary-soft/60 px-4 py-3 text-sm text-foreground">
-      <span className="flex items-center gap-1" aria-hidden="true">
-        {[0, 150, 300].map((delay) => (
-          <span
-            key={delay}
-            className="h-1.5 w-1.5 rounded-full bg-primary-vivid animate-bounce"
-            style={{ animationDelay: `${delay}ms` }}
-          />
-        ))}
-      </span>
+    <div className="flex items-center gap-3 rounded-2xl border border-border/40 bg-primary-soft/60 px-4 py-3 text-sm text-foreground">
+      <RukiThinkingMark className="h-7 w-7" />
       <AnimatePresence mode="wait">
         <motion.span
           key={label}
@@ -178,15 +186,13 @@ const isNoMatchesOrError = (msg: Message): boolean => {
 export function AnimatedAIChat({
   messages = [],
   onSendMessage,
-  isRecording = false,
-  onStartRecording,
-  onStopRecording,
-  isAudioMuted = true,
-  onToggleMute,
+  onOpenVoiceMode,
   sidebarOpen = false,
   onToggleSidebar,
   chatHistory = [],
   onSelectHistoryItem,
+  onDeleteHistoryItem,
+  activeChatId,
   onStartNewChat,
   introComponent,
   theme = "light",
@@ -198,12 +204,28 @@ export function AnimatedAIChat({
   onAddToCart,
   onAddToBox,
   activeMode = "Smart Shopping",
+  onAttachImage,
+  suggestions = DEFAULT_SUGGESTIONS,
+  authSlot,
 }: AnimatedAIChatProps) {
   const [inputValue, setInputValue] = React.useState("");
   const [isFocused, setIsFocused] = React.useState(false);
   const [railCollapsed, setRailCollapsed] = React.useState(false);
+  const [showSuggestions, setShowSuggestions] = React.useState(false);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const chatFeedEndRef = React.useRef<HTMLDivElement>(null);
+  const suggestionsRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!showSuggestions) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showSuggestions]);
 
   const isEmpty = messages.length === 0;
 
@@ -236,73 +258,109 @@ export function AnimatedAIChat({
 
   // ── Pill-shaped input with micro-interactive focus glow ring ──────────────
   const inputBar = (
-    <div
-      className={`relative flex items-end gap-2 rounded-[28px] border bg-surface/60 px-3 py-2 backdrop-blur-md transition-all duration-300 ${
-        isFocused
-          ? "border-primary/50 bg-surface shadow-[0_0_0_4px_rgba(124,58,173,0.14),0_14px_44px_-14px_rgba(60,27,99,0.4)]"
-          : "border-border shadow-sm"
-      }`}
-    >
-      <button
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer"
-        title="Attach media"
-        type="button"
+    <div className="relative" ref={suggestionsRef}>
+      {/* Smart suggestions popover */}
+      <AnimatePresence>
+        {showSuggestions && (
+          <motion.div
+            initial={{ opacity: 0, y: 8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.98 }}
+            transition={{ duration: 0.15 }}
+            className="absolute bottom-full left-0 z-30 mb-2 w-full min-w-64 overflow-hidden rounded-2xl border border-border bg-surface p-1.5 shadow-xl"
+          >
+            <div className="px-2.5 py-1.5 text-[10px] font-black uppercase tracking-wider text-muted-foreground/60">
+              Try asking
+            </div>
+            {suggestions.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onClick={() => {
+                  onSendMessage?.(s);
+                  setShowSuggestions(false);
+                }}
+                className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-semibold text-foreground/90 transition-colors hover:bg-primary-soft cursor-pointer"
+              >
+                <Sparkles className="h-3.5 w-3.5 shrink-0 text-primary-vivid" />
+                {s}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div
+        className={`relative flex items-end gap-2 rounded-[28px] border bg-surface/60 px-3 py-2 backdrop-blur-md transition-all duration-300 ${
+          isFocused
+            ? "border-primary-vivid/50 bg-surface shadow-[0_0_0_4px_var(--primary-glow),0_14px_44px_-14px_var(--primary-glow)]"
+            : "border-border shadow-sm"
+        }`}
       >
-        <Paperclip className="h-4 w-4" />
-      </button>
-
-      <textarea
-        ref={textareaRef}
-        rows={1}
-        value={inputValue}
-        onChange={(e) => setInputValue(e.target.value)}
-        onKeyDown={handleKeyDown}
-        onFocus={() => setIsFocused(true)}
-        onBlur={() => setIsFocused(false)}
-        placeholder="What's on your mind?"
-        className="max-h-32 min-h-[24px] flex-1 resize-none self-center overflow-y-auto bg-transparent py-1.5 text-sm leading-relaxed outline-none placeholder:text-muted-foreground/60 select-text"
-      />
-
-      <div className="flex shrink-0 items-center gap-1.5">
         <button
+          onClick={() => onAttachImage?.()}
+          disabled={!onAttachImage}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+          title="Search by photo"
+          aria-label="Search by photo — upload a product picture"
           type="button"
-          title="Smart suggestions"
-          className="hidden h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer sm:flex"
         >
-          <Sparkles className="h-4 w-4" />
+          <Camera className="h-4 w-4" />
         </button>
 
-        <button
-          onMouseDown={onStartRecording}
-          onMouseUp={onStopRecording}
-          onMouseLeave={onStopRecording}
-          onTouchStart={onStartRecording}
-          onTouchEnd={onStopRecording}
-          type="button"
-          className={`flex h-9 w-9 touch-none select-none items-center justify-center rounded-full transition-colors cursor-pointer ${
-            isRecording
-              ? "bg-red-500 text-white animate-pulse"
-              : "text-muted-foreground hover:bg-primary-soft hover:text-foreground"
-          }`}
-          title="Hold to record voice transcription"
-          aria-label="Hold to talk"
-        >
-          <Mic className="h-4 w-4" />
-        </button>
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          placeholder="What's on your mind?"
+          className="max-h-32 min-h-[24px] flex-1 resize-none self-center overflow-y-auto bg-transparent py-1.5 text-sm leading-relaxed outline-none placeholder:text-muted-foreground/60 select-text"
+        />
 
-        <button
-          onClick={handleSend}
-          disabled={!inputValue.trim()}
-          type="button"
-          className={`flex h-9 w-9 items-center justify-center rounded-full transition-all cursor-pointer ${
-            inputValue.trim()
-              ? "bg-primary text-primary-foreground shadow-sm hover:opacity-90 active:scale-95"
-              : "bg-muted text-muted-foreground/50 cursor-not-allowed"
-          }`}
-          aria-label="Send"
-        >
-          <ArrowUp className="h-4 w-4" />
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setShowSuggestions((p) => !p)}
+            title="Smart suggestions"
+            aria-label="Smart suggestions"
+            aria-expanded={showSuggestions}
+            className={`flex h-9 w-9 items-center justify-center rounded-full transition-colors cursor-pointer ${
+              showSuggestions
+                ? "bg-primary-soft text-primary-vivid"
+                : "text-muted-foreground hover:bg-primary-soft hover:text-foreground"
+            }`}
+          >
+            <Sparkles className="h-4 w-4" />
+          </button>
+
+          <button
+            onClick={() => onOpenVoiceMode?.()}
+            disabled={!onOpenVoiceMode}
+            type="button"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+            title="Hands-free voice mode"
+            aria-label="Open hands-free voice assistant"
+          >
+            <Mic className="h-4 w-4" />
+          </button>
+
+          <button
+            onClick={handleSend}
+            disabled={!inputValue.trim()}
+            type="button"
+            className={`flex h-9 w-9 items-center justify-center rounded-full transition-all cursor-pointer ${
+              inputValue.trim()
+                ? "bg-linear-to-r from-primary-vivid to-primary-vivid-soft text-primary-foreground shadow-sm hover:brightness-105 active:scale-95"
+                : "bg-muted text-muted-foreground/50 cursor-not-allowed"
+            }`}
+            aria-label="Send"
+          >
+            <ArrowUp className="h-4 w-4" />
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -389,19 +447,40 @@ export function AnimatedAIChat({
           </div>
         ) : (
           <div className="scroll-slim space-y-1">
-            {chatHistory.map((chatItem) => (
-              <button
-                key={chatItem.id}
-                onClick={() => {
-                  onSelectHistoryItem?.(chatItem.id);
-                  onCloseMobile?.();
-                }}
-                className="flex w-full flex-col gap-0.5 rounded-xl border border-transparent px-3 py-2.5 text-left transition-all duration-300 hover:border-border/30 hover:bg-primary-soft cursor-pointer"
-              >
-                <span className="truncate text-xs font-bold text-foreground/90">{chatItem.title}</span>
-                <span className="text-[10px] text-muted-foreground/60">{chatItem.date}</span>
-              </button>
-            ))}
+            {chatHistory.map((chatItem) => {
+              const isActive = activeChatId === chatItem.id;
+              return (
+                <div key={chatItem.id} className="group relative">
+                  <button
+                    onClick={() => {
+                      onSelectHistoryItem?.(chatItem.id);
+                      onCloseMobile?.();
+                    }}
+                    className={`flex w-full flex-col gap-0.5 rounded-xl border px-3 py-2.5 pr-9 text-left transition-all duration-300 cursor-pointer ${
+                      isActive
+                        ? "border-border/40 bg-primary-soft"
+                        : "border-transparent hover:border-border/30 hover:bg-primary-soft/60"
+                    }`}
+                  >
+                    <span className="truncate text-xs font-bold text-foreground/90">{chatItem.title}</span>
+                    <span className="text-[10px] text-muted-foreground/60">{chatItem.date}</span>
+                  </button>
+                  {onDeleteHistoryItem && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteHistoryItem(chatItem.id);
+                      }}
+                      aria-label={`Delete chat "${chatItem.title}"`}
+                      title="Delete chat"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 grid h-7 w-7 place-items-center rounded-lg text-muted-foreground opacity-0 transition-all duration-200 hover:bg-red-500/10 hover:text-red-500 focus-visible:opacity-100 group-hover:opacity-100 cursor-pointer"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -418,23 +497,6 @@ export function AnimatedAIChat({
             {!collapsed && (theme === "light" ? "Dark mode" : "Light mode")}
           </button>
         )}
-        {onToggleMute && (
-          <button
-            onClick={onToggleMute}
-            title="Toggle voice output"
-            className={collapsed ? "flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer mx-auto" : toolBtn}
-          >
-            {isAudioMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4 text-primary" />}
-            {!collapsed && (
-              <>
-                Voice output
-                <span className="ml-auto text-[10px] font-black uppercase tracking-wider opacity-70">
-                  {isAudioMuted ? "Off" : "On"}
-                </span>
-              </>
-            )}
-          </button>
-        )}
         {onClearHistory && (
           <button
             onClick={onClearHistory}
@@ -447,8 +509,12 @@ export function AnimatedAIChat({
         )}
       </div>
 
-      {/* Guest / session card */}
+      {/* Guest / session card — swapped for real sign-in / user management
+          when authSlot is provided (Clerk enabled); plain guest chip otherwise. */}
       <div className={`shrink-0 border-t border-border p-3 ${collapsed ? "px-2" : ""}`}>
+        {authSlot ? (
+          authSlot(collapsed)
+        ) : (
         <div className={`flex items-center gap-2.5 rounded-xl px-2 py-2 ${collapsed ? "justify-center" : ""}`}>
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber text-xs font-black text-amber-foreground">
             {initials}
@@ -463,6 +529,7 @@ export function AnimatedAIChat({
             </>
           )}
         </div>
+        )}
       </div>
     </div>
   );
@@ -615,7 +682,7 @@ export function AnimatedAIChat({
                       <div
                         className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm select-text ${
                           message.role === "user"
-                            ? "bg-primary text-primary-foreground font-medium"
+                            ? "bg-linear-to-r from-primary-vivid to-primary-vivid-soft text-primary-foreground font-medium"
                             : "bg-primary-soft/60 border border-border/40 text-foreground"
                         }`}
                       >

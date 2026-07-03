@@ -9,7 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@dotlottie/react-player": "^1.6.19",
+    "@clerk/nextjs": "^6.36.0",
     "@lottiefiles/dotlottie-react": "^0.19.5",
     "framer-motion": "^12.42.1",
     "lucide-react": "^1.22.0",

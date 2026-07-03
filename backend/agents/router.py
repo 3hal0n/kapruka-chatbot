@@ -40,6 +40,11 @@ class Router:
     def __init__(self, customer_id: str):
         self.customer_id = customer_id
         self.st_memory = ShortTermMemory()
+        # Products from the most recent carousel shown to this user. Follow-up
+        # cart commands ("add that", "add the 50 red roses one", "add the first")
+        # resolve against what the user is actually looking at — a fresh MCP
+        # keyword search for the same words routinely returns a DIFFERENT item.
+        self.last_products: list[dict] = []
 
     def _detect_cart_action(self, user_message: str) -> dict | None:
         """
@@ -93,6 +98,8 @@ class Router:
             r"\bproceed\s+to\s+(?:buy|order|checkout|pay)\b",
             r"\b(?:let'?s?|lets?)\s+(?:proceed|go\s+ahead|checkout)\b",
             r"\bgo\s+ahead\s+(?:and\s+)?(?:order|buy|checkout)\b",
+            # Sinhala/Tanglish: "cart ekete danna", "cart eke daala", "cart ekata dapan"
+            r"\bcart\s+ek\w*\s+da\w*\b",
         ]
 
         for pattern in CART_PATTERNS:
@@ -136,6 +143,21 @@ class Router:
         if quoted:
             return quoted.group(1).strip()
 
+        # 1.5. Sinhala/Tanglish leading phrase: "s11 mini eke cart ekete danna"
+        # → the product is everything BEFORE the "cart ek… da…" tail.
+        sinhala_match = _re.search(
+            r"^(.*?)\s+(?:ek\w*\s+)?cart\s+ek\w*", user_message, _re.IGNORECASE
+        )
+        if sinhala_match:
+            candidate = sinhala_match.group(1).strip()
+            # Strip trailing Sinhala particles that bled into the capture.
+            candidate = _re.sub(
+                r"\b(?:eke|eka|ekak|ekata|ekete|mata|mage|oyata)\s*$", "",
+                candidate, flags=_re.IGNORECASE,
+            ).strip()
+            if len(candidate) > 2:
+                return candidate
+
         # 2. Phrase extraction — capture between action verb and terminus
         phrase_match = _re.search(
             r'\b(?:add|buy|put|get\s+me)\s+(?:the\s+)?(?:first\s+)?(.+?)'
@@ -177,6 +199,140 @@ class Router:
                 pass
 
         return ""
+
+    # ── Carousel-aware cart reference resolution ──────────────────────────────
+
+    _ORDINALS = {
+        "first": 0, "1st": 0, "top": 0,
+        "second": 1, "2nd": 1,
+        "third": 2, "3rd": 2,
+        "fourth": 3, "4th": 3,
+        "fifth": 4, "5th": 4,
+    }
+
+    # Filler that carries no product signal — verbs, pronouns, chit-chat,
+    # plus Sinhala/Tanglish particles ("… eke cart ekete danna").
+    _CART_STOPWORDS = {
+        "add", "buy", "put", "place", "get", "take", "me", "to", "the", "my",
+        "a", "an", "cart", "in", "into", "it", "that", "this", "one", "item",
+        "items", "please", "pls", "can", "could", "u", "you", "i", "think",
+        "she", "he", "they", "we", "will", "would", "like", "likes", "love",
+        "loves", "want", "wants", "and", "then", "now", "also", "shown",
+        "showed", "saw", "earlier", "before", "checkout", "order", "for",
+        "her", "him", "them", "of", "on", "so",
+        "eke", "eka", "ekak", "ekata", "ekete", "ekath", "danna", "daanna",
+        "dapan", "dala", "daala", "oni", "ona", "mata", "mage", "oyata",
+        "karala", "karanna", "genna",
+    }
+
+    # Modifier words too generic to identify a product on their own — a search
+    # result must share at least one token OUTSIDE this set with the query
+    # ("s11 mini" must match on "s11", never on "mini" alone → no Mini Cake).
+    _GENERIC_MODIFIERS = {
+        "mini", "small", "large", "big", "new", "pro", "plus", "max", "set",
+        "pack", "box", "combo", "item", "gift", "piece", "style",
+    }
+
+    def _pick_verified_search_result(self, query: str, products: list) -> dict | None:
+        """From MCP keyword-search results, return the first product whose name
+        shares a DISTINCTIVE token with the query — or None (no blind adds)."""
+        import re as _re
+
+        def tokens(s: str) -> set[str]:
+            out = set()
+            for t in _re.findall(r"[a-z0-9]+", (s or "").lower()):
+                if len(t) < 2:
+                    continue
+                out.add(t[:-1] if len(t) > 3 and t.endswith("s") else t)
+            return out
+
+        q_tokens = tokens(query) - self._CART_STOPWORDS
+        distinctive = q_tokens - self._GENERIC_MODIFIERS
+        required = distinctive or q_tokens
+        if not required:
+            return None
+        for p in products:
+            if not isinstance(p, dict):
+                continue
+            if required & tokens(str(p.get("name") or "")):
+                return p
+        return None
+
+    def _match_last_product(self, query: str, user_message: str) -> dict | None:
+        """Resolve a cart reference against the last carousel shown to the user.
+
+        Handles three reference styles, in priority order:
+        1. Ordinals — "add the first one", "buy the 2nd".
+        2. Partial names — "add the 50 red roses heart shaped bouquet" matches
+           "50 Red Roses Heart-shaped Bouquet – Romantic Luxury Flower…" by
+           token overlap, so users never need to type the exact catalog title.
+        3. Bare pronouns — "add it to my cart" right after a carousel refers to
+           the first (top) recommendation.
+
+        Returns the matched product dict, or None when nothing shown/matched
+        (caller then falls back to a live MCP search).
+        """
+        import re as _re
+
+        candidates = [p for p in (self.last_products or []) if isinstance(p, dict)]
+        if not candidates:
+            return None
+
+        msg = (user_message or "").lower()
+
+        # 1. Ordinal reference
+        for word, idx in self._ORDINALS.items():
+            if _re.search(rf"\b{word}\b", msg) and idx < len(candidates):
+                print(f"[CartResolver] Ordinal '{word}' -> '{candidates[idx].get('name')}'")
+                return candidates[idx]
+        if _re.search(r"\blast\s+(one|item|product)\b", msg):
+            return candidates[-1]
+
+        def tokens(s: str) -> set[str]:
+            out = set()
+            for t in _re.findall(r"[a-z0-9]+", (s or "").lower()):
+                if t in self._CART_STOPWORDS or len(t) < 2:
+                    continue
+                # Cheap plural fold so "roses" matches "Rose" and vice versa.
+                out.add(t[:-1] if len(t) > 3 and t.endswith("s") else t)
+            return out
+
+        # Score against BOTH the extracted query and the raw message. The
+        # extracted query can be a stale history fallback (e.g. "flowers"),
+        # while the literal message often carries the richest product tokens
+        # ("...the 50 red roses heart shaped bouquet...") — best match wins.
+        token_sets = [ts for ts in (tokens(query), tokens(user_message)) if ts]
+
+        # 3. Bare pronoun ("add it/that") — nothing product-like left in the
+        # message; "it" means the recommendation they're looking at.
+        if not token_sets:
+            print(f"[CartResolver] Pronoun reference -> first shown item '{candidates[0].get('name')}'")
+            return candidates[0]
+
+        # 2. Token-overlap name match
+        best: dict | None = None
+        best_key = (0, 0.0, 0)
+        for q_tokens in token_sets:
+            for pos, p in enumerate(candidates):
+                name_tokens = tokens(str(p.get("name") or ""))
+                overlap = len(q_tokens & name_tokens)
+                if overlap == 0:
+                    continue
+                coverage = overlap / len(q_tokens)
+                # Accept only confident matches: 2+ shared tokens, or every token
+                # the user gave appears in the product name ("add roses" → Roses).
+                if overlap < 2 and coverage < 1.0:
+                    continue
+                key = (overlap, coverage, -pos)  # more overlap > more coverage > shown earlier
+                if key > best_key:
+                    best, best_key = p, key
+
+        if best is not None:
+            print(
+                f"[CartResolver] Matched '{query or user_message}' -> "
+                f"'{best.get('name')}' (overlap={best_key[0]}, coverage={best_key[1]:.2f})"
+            )
+        return best
 
     def classify_intents(self, user_message: str) -> dict:
 
@@ -501,28 +657,56 @@ class Router:
         if "CART_ACTION" in intents:
             cart_items = classification.get("cart_items") or []
             trigger_checkout = classification.get("trigger_checkout") or False
-            
+
+            # Pronoun-only add ("add it to my cart") arrives with no cart_items
+            # query — resolve it against the carousel the user is looking at.
+            if not cart_items and not trigger_checkout and _re.search(
+                r"\b(?:add|buy|take|get|put)\b.*\b(?:it|that|this|one)\b",
+                user_message, _re.IGNORECASE,
+            ):
+                cart_items = [{"query": "", "quantity": 1}]
+
             for item in cart_items:
-                q = item.get("query")
+                q = item.get("query") or ""
                 quantity = item.get("quantity", 1)
+
+                # 1. Resolve against the last shown carousel first — a fresh MCP
+                # keyword search for a partial name routinely returns a
+                # DIFFERENT product than the one on the user's screen.
+                matched = self._match_last_product(q, user_message)
+                if matched is not None:
+                    p_to_add = dict(matched)
+                    p_to_add["quantity"] = quantity
+                    cart_products_to_add.append(p_to_add)
+                    continue
+
+                # 2. Nothing shown / no overlap — fall back to a live search,
+                # but VERIFY the hit shares a distinctive token with the query.
+                # Kapruka's keyword relevance is loose ("s11 mini" → "Mini
+                # Cake"); adding its blind top hit put wrong items in carts.
                 if q:
                     try:
                         from infrastructure.mcp.client import kapruka_search_products
-                        search_res = await kapruka_search_products(q, limit=1)
+                        search_res = await kapruka_search_products(q, limit=5)
                         products = []
                         if isinstance(search_res, dict):
                             products = search_res.get("products") or search_res.get("result") or []
                         elif isinstance(search_res, list):
                             products = search_res
-                            
-                        if products:
-                            # Take the first product matching and set its quantity
-                            p_to_add = dict(products[0])
+
+                        verified = self._pick_verified_search_result(q, products)
+                        if verified is not None:
+                            p_to_add = dict(verified)
                             p_to_add["quantity"] = quantity
                             cart_products_to_add.append(p_to_add)
+                        elif products:
+                            print(
+                                f"[CartResolver] Rejected top search hit "
+                                f"'{products[0].get('name')}' for query '{q}' — no distinctive token overlap."
+                            )
                     except Exception as e:
                         print(f"Error searching product '{q}' for cart: {e}")
-            
+
             # If products were matched or checkout is triggered, yield <<CART_UPDATE>>:
             if cart_products_to_add or trigger_checkout:
                 cart_update_payload = {
@@ -547,6 +731,17 @@ class Router:
                 confirm_msg = "Perfect! Generating your checkout link now. Please review the details in the popup..."
                 yield confirm_msg
                 full_response_chunks.append(confirm_msg)
+            elif "SEARCH" not in intents:
+                # A cart command we couldn't resolve — say so instead of ending
+                # the stream silently (which surfaced as the frontend's generic
+                # "couldn't find matching results" fallback).
+                fail_msg = (
+                    "Hmm, I couldn't match that to one of the items I showed you 🛒 — "
+                    "tell me a bit of the product name (or just say \"add the first one\") "
+                    "and I'll pop it in your cart!"
+                )
+                yield fail_msg
+                full_response_chunks.append(fail_msg)
 
         # 2. allergies_dict and preferences_dict still needed for PREFERENCE_UPDATE
         allergies_dict = classification.get("allergies") or {}
@@ -684,9 +879,18 @@ class Router:
                 vibe_check=vibe_check,
                 profile_allergies=_profile_allergies,
             ):
+                # Remember what's on the user's screen so follow-up cart
+                # commands ("add that one") resolve against this carousel.
+                if isinstance(chunk, str) and chunk.startswith("<<PRODUCTS>>:"):
+                    try:
+                        shown = json.loads(chunk.split("<<PRODUCTS>>:", 1)[1])
+                        if isinstance(shown, list) and shown:
+                            self.last_products = shown
+                    except (json.JSONDecodeError, ValueError):
+                        pass
                 if chunk != "<<CLEAR>>":
                     full_response_chunks.append(chunk)
-                yield chunk 
+                yield chunk
 
         # 7. Logistics already done by now — yield it
         if "LOGISTICS" in intents and logistics_task:

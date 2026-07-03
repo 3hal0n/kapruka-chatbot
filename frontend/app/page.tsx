@@ -1,18 +1,27 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertCircle, Gift } from "lucide-react";
+import { Gift } from "lucide-react";
 
 import { RightCart, CartItem } from "@/components/RightCart";
 import { GroupGiftModal } from "@/components/GroupGiftModal";
+import { CheckoutModal, CheckoutDetails, CheckoutResult, CheckoutPrefill } from "@/components/CheckoutModal";
 import { Product, kaprukaBuyUrl } from "@/components/ProductCard";
 import { AnimatedAIChat, Message as ChatMessage } from "@/components/ui/animated-ai-chat";
+import { AccessibilityLayer } from "@/components/AccessibilityLayer";
+import { AuthPanel, RukiIdentity } from "@/components/auth/AuthPanel";
+import { speakText, stopSpeech } from "@/lib/ruki-tts";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   process.env.NEXT_PUBLIC_BACKEND_URL ||
   "http://localhost:8000";
+
+// Clerk is optional: without a publishable key the app runs in guest-only mode
+// exactly as before (no provider, no hooks, no auth headers).
+const CLERK_ENABLED = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+
 const generateUserId = () => `ruki_${Math.random().toString(36).substring(2, 10)}`;
 
 interface Message {
@@ -50,6 +59,12 @@ export default function RukiPage() {
   const [isGroupGiftModalOpen, setIsGroupGiftModalOpen] = useState(false);
   const [groupGiftLink, setGroupGiftLink] = useState("");
 
+  // ── Checkout — kapruka_create_order click-to-pay link (per MCP docs, the
+  // only way to transfer a multi-item cart to kapruka.com).
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [checkoutPrefill, setCheckoutPrefill] = useState<CheckoutPrefill | undefined>(undefined);
+  const [checkoutAutoResult, setCheckoutAutoResult] = useState<CheckoutResult | undefined>(undefined);
+
   // ── Gift Box Builder
   const [giftBoxItems, setGiftBoxItems] = useState<CartItem[]>([]);
   const [flyingItems, setFlyingItems] = useState<FlyingItem[]>([]);
@@ -57,8 +72,14 @@ export default function RukiPage() {
 
   // ── Input & Voice toggles
   const [language, setLanguage] = useState("English");
-  const [isMicActive, setIsMicActive] = useState(false);
   const [isAudioActive, setIsAudioActive] = useState(false);
+
+  // ── Accessibility (hands-free) Voice Assistant Mode
+  const [accessibilityOpen, setAccessibilityOpen] = useState(false);
+  const accessibilityOpenRef = useRef(false);
+  useEffect(() => {
+    accessibilityOpenRef.current = accessibilityOpen;
+  }, [accessibilityOpen]);
 
   // ── Theme — pristine Light Mode by default, switches to Dark
   const [theme, setTheme] = useState<"light" | "dark">("light");
@@ -67,9 +88,15 @@ export default function RukiPage() {
   }, [theme]);
   const toggleTheme = () => setTheme(p => p === "light" ? "dark" : "light");
 
-  // ── Session ID
+  // ── Session ID — guest id survives sign-out so anonymous chats resume cleanly
   const userIdRef = useRef<string>("");
-  if (!userIdRef.current) userIdRef.current = generateUserId();
+  const guestIdRef = useRef<string>("");
+  if (!guestIdRef.current) guestIdRef.current = generateUserId();
+  if (!userIdRef.current) userIdRef.current = guestIdRef.current;
+
+  // ── Clerk identity — resolved by <AuthPanel/>; guest fallback when disabled
+  const identityRef = useRef<RukiIdentity | null>(null);
+  const [isSignedIn, setIsSignedIn] = useState(false);
 
   // ── Guest label — derived client-side only after mount so the random
   // session id never diverges between the server and client render pass.
@@ -90,62 +117,63 @@ export default function RukiPage() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [deliveryFee, setDeliveryFee] = useState(350);
 
-  // ── Speech Transcription Web Speech API
-  const recognitionRef = useRef<any>(null);
+  // ── Vision search upload
+  const imageInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      if (SpeechRecognition) {
-        const rec = new SpeechRecognition();
-        rec.continuous = true;
-        rec.interimResults = false;
-        rec.lang = "en-US";
+  // ── Authenticated fetch headers — attaches the Clerk session JWT when present
+  const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
+    const identity = identityRef.current;
+    if (!identity?.userId) return {};
+    const token = await identity.getToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }, []);
 
-        rec.onresult = (event: any) => {
-          const text = event.results[event.results.length - 1][0].transcript;
-          if (text) {
-            // Append transcribed text
-            const chatInputEl = document.getElementById("chat-input-text") as HTMLTextAreaElement;
-            if (chatInputEl) {
-              const value = chatInputEl.value;
-              chatInputEl.value = (value ? value + " " : "") + text.trim();
-              const event = new Event('input', { bubbles: true });
-              chatInputEl.dispatchEvent(event);
+  // ── Identity resolution — switch the whole session to the clerk_id on sign-in
+  const handleIdentity = useCallback((identity: RukiIdentity) => {
+    identityRef.current = identity;
+    if (identity.userId) {
+      setIsSignedIn(true);
+      userIdRef.current = identity.userId;
+      setGuestLabel(identity.label || "Member");
+      const stored = localStorage.getItem(`ruki_chat_messages_${identity.userId}`);
+      setMessages(stored ? JSON.parse(stored) : []);
+      // Hydrate the server-persisted cart (cross-device continuity).
+      identity.getToken().then(token => {
+        if (!token) return;
+        fetch(`${BACKEND_URL}/api/me/cart`, { headers: { Authorization: `Bearer ${token}` } })
+          .then(r => (r.ok ? r.json() : null))
+          .then(d => {
+            if (d?.items?.length) {
+              setCart(prev => (prev.length === 0 ? d.items : prev));
             }
-          }
-        };
-
-        rec.onerror = () => setIsMicActive(false);
-        rec.onend = () => setIsMicActive(false);
-        recognitionRef.current = rec;
-      }
+          })
+          .catch(() => { /* cart service offline — local cart still works */ });
+      });
+    } else {
+      setIsSignedIn(false);
+      userIdRef.current = guestIdRef.current;
+      syncGuestLabel();
+      const stored = localStorage.getItem(`ruki_chat_messages_${guestIdRef.current}`);
+      setMessages(stored ? JSON.parse(stored) : []);
     }
   }, []);
 
-  const handleStartRecording = () => {
-    if (!recognitionRef.current) {
-      alert("Speech recognition is not supported in this browser. Please use Chrome or Edge.");
-      return;
-    }
-    if (isMicActive) return;
-    try {
-      recognitionRef.current.start();
-      setIsMicActive(true);
-    } catch {
-      // already active
-    }
-  };
-
-  const handleStopRecording = () => {
-    if (!recognitionRef.current) return;
-    try {
-      recognitionRef.current.stop();
-    } catch {
-      // not running
-    }
-    setIsMicActive(false);
-  };
+  // ── Persist the cart server-side for signed-in users (debounced)
+  useEffect(() => {
+    if (!isSignedIn) return;
+    const t = setTimeout(async () => {
+      const headers = await authHeaders();
+      if (!headers.Authorization) return;
+      fetch(`${BACKEND_URL}/api/me/cart`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({
+          items: cart.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity, image_url: i.image_url })),
+        }),
+      }).catch(() => { /* best-effort persistence */ });
+    }, 900);
+    return () => clearTimeout(t);
+  }, [cart, isSignedIn, authHeaders]);
 
   // ── Load Chat History on mount
   useEffect(() => {
@@ -155,7 +183,7 @@ export default function RukiPage() {
       if (storedHistory) {
         setChatHistory(JSON.parse(storedHistory));
       }
-      
+
       // Load current messages — otherwise leave empty so the hero landing view shows
       const storedMessages = localStorage.getItem(`ruki_chat_messages_${userIdRef.current}`);
       if (storedMessages) {
@@ -164,37 +192,44 @@ export default function RukiPage() {
     }
   }, []);
 
-  // ── Speech Output (TTS)
+  // ── Speech Output (TTS) — routed through the backend Cloud TTS voice
+  // (female si-LK, Sinhala-capable) with automatic browser fallback.
   const speakResponse = (text: string) => {
+    // In hands-free mode the AccessibilityLayer speaks every reply itself.
+    if (accessibilityOpenRef.current) return;
     if (!isAudioActive) return;
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
-    window.speechSynthesis.cancel();
-    const cleanText = text.replace(/<<.*?>>/g, "").trim();
-    if (!cleanText) return;
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = "en-US";
-    window.speechSynthesis.speak(utterance);
+    void speakText(text);
   };
 
   useEffect(() => {
-    if (!isAudioActive && typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
+    if (!isAudioActive && !accessibilityOpen) {
+      stopSpeech();
     }
-  }, [isAudioActive]);
+  }, [isAudioActive, accessibilityOpen]);
 
   // ── Cart operations
-  const handleAddToCart = (product: Product, quantity?: number) => {
+  // Pure merge so the SSE cart_update handler can compute a reliable snapshot
+  // synchronously (React state updates are async/batched, so reading `cart`
+  // right after calling setCart would see the stale pre-update value).
+  const mergeProductIntoCart = (list: CartItem[], product: Product, quantity?: number): CartItem[] => {
     const price = typeof product.price === "object" ? (product.price as any).amount : Number(product.price);
     const id = product.id || (product as any).code || "";
     const qtyToAdd = quantity !== undefined ? quantity : (product as any).quantity || 1;
+    const description = product.specs || product.category || product.summary || "";
+    const hit = list.find(i => i.id === id);
+    if (hit) return list.map(i => i.id === id ? { ...i, quantity: i.quantity + qtyToAdd } : i);
+    return [...list, { id, name: product.name, price, image_url: product.image_url || product.image || "", quantity: qtyToAdd, url: kaprukaBuyUrl(product), description }];
+  };
+
+  const handleAddToCart = (product: Product, quantity?: number) => {
     setCart(prev => {
-      const hit = prev.find(i => i.id === id);
-      if (hit) return prev.map(i => i.id === id ? { ...i, quantity: i.quantity + qtyToAdd } : i);
-      if (prev.length === 0) {
+      const wasEmpty = prev.length === 0;
+      const next = mergeProductIntoCart(prev, product, quantity);
+      if (wasEmpty && next.length > 0) {
         fetch(`${BACKEND_URL}/api/delivery?city=Colombo`)
           .then(r => r.json()).then(d => { if (d.fee) setDeliveryFee(d.fee); }).catch(() => {});
       }
-      return [...prev, { id, name: product.name, price, image_url: product.image_url || product.image || "", quantity: qtyToAdd, url: kaprukaBuyUrl(product) }];
+      return next;
     });
     if (window.innerWidth < 768) setRightOpen(true);
   };
@@ -202,24 +237,63 @@ export default function RukiPage() {
   const updateQuantity = (id: string, delta: number) =>
     setCart(prev => prev.map(i => i.id === id ? { ...i, quantity: i.quantity + delta } : i).filter(i => i.quantity > 0));
 
+  const handleRemoveFromCart = (id: string) =>
+    setCart(prev => prev.filter(i => i.id !== id));
+
   const subtotal = cart.reduce((s, i) => s + i.price * i.quantity, 0);
   const delivery = cart.length > 0 ? deliveryFee : 0;
   const total = subtotal + delivery;
 
-  const handleCreateOrderLink = () => {
-    if (cart.length === 0) return;
-    cart.forEach((item, idx) => {
+  // Fallback only: open each cart item's Kapruka product page individually
+  // (used when order creation fails — product pages can't carry the cart).
+  const handleOpenProductPages = (items?: CartItem[]) => {
+    const list = items ?? cart;
+    if (list.length === 0) return;
+    list.forEach((item, idx) => {
       const url = item.url || `https://www.kapruka.com/buyonline/${item.name.toLowerCase().replace(/ /g, "-")}/kid/${item.id.toLowerCase()}`;
       setTimeout(() => window.open(url, "_blank", "noopener,noreferrer"), idx * 120);
     });
   };
 
+  // Real multi-item checkout: /api/order → kapruka_create_order → click-to-pay
+  // URL for the WHOLE cart (no Kapruka account needed, prices locked 60 min).
+  // `cartOverride` lets the SSE handler pass a fresh snapshot past batching.
+  const submitOrder = async (details: CheckoutDetails, cartOverride?: CartItem[]): Promise<CheckoutResult> => {
+    const orderCart = cartOverride ?? cart;
+    const headers = await authHeaders();
+    const res = await fetch(`${BACKEND_URL}/api/order`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({
+        user_id: userIdRef.current,
+        cart: orderCart.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity, image_url: i.image_url })),
+        recipient_name: details.recipientName,
+        delivery_address: details.deliveryAddress,
+        contact_number: details.contactNumber,
+        city: details.city,
+        gift_message: details.giftMessage,
+      }),
+    });
+    const data = await res.json();
+    if (data.status === "success" && data.checkout_url) {
+      // Order created on Kapruka's side — the pay link owns the cart now.
+      setCart([]);
+    }
+    return {
+      status: data.status === "success" ? "success" : data.status === "no_link" ? "no_link" : "error",
+      checkoutUrl: data.checkout_url ?? null,
+      orderId: data.order_id ?? null,
+      message: data.message || "Order submitted.",
+    };
+  };
+
   // ── Clear history
   const handleClearHistory = async () => {
-    try { 
-      await fetch(`${BACKEND_URL}/api/reset`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: userIdRef.current }) }); 
+    try {
+      const headers = await authHeaders();
+      await fetch(`${BACKEND_URL}/api/reset`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ user_id: userIdRef.current }) });
     } catch { /* offline */ }
-    
+
     const newMsg: Message = { id: `clear-${Date.now()}`, sender: "ai", text: "History cleared. How can I help you find gifts today?" };
     setMessages([newMsg]);
     localStorage.setItem(`ruki_chat_messages_${userIdRef.current}`, JSON.stringify([newMsg]));
@@ -262,9 +336,10 @@ export default function RukiPage() {
   const handleGroupGift = async () => {
     if (cart.length === 0) return;
     try {
+      const headers = await authHeaders();
       const res = await fetch(`${BACKEND_URL}/api/group-gift/create`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...headers },
         body: JSON.stringify({
           cart: cart.map(i => ({ id: i.id, name: i.name, price: i.price, quantity: i.quantity, image_url: i.image_url })),
           subtotal,
@@ -279,6 +354,58 @@ export default function RukiPage() {
       setGroupGiftLink(`${window.location.origin}/?group_gift=preview`);
     }
     setIsGroupGiftModalOpen(true);
+  };
+
+  // ── Persist a finished turn to local storage + state
+  const commitMessages = (finalized: Message[]) => {
+    setMessages(finalized);
+    localStorage.setItem(`ruki_chat_messages_${userIdRef.current}`, JSON.stringify(finalized));
+  };
+
+  // ── Multimodal Computer Vision search — photo upload → catalog matches
+  const handleImageSelected = async (file: File) => {
+    if (!file) return;
+    setIsTyping(true);
+    setCurrentStatus("Analysing your photo…");
+
+    const userMsg: Message = { id: `user-${Date.now()}`, sender: "user", text: `📷 Photo search: ${file.name}` };
+    const updatedMessages = [...messages, userMsg];
+    commitMessages(updatedMessages);
+
+    try {
+      const headers = await authHeaders();
+      const form = new FormData();
+      form.append("image", file);
+      const res = await fetch(`${BACKEND_URL}/api/vision/search`, {
+        method: "POST",
+        headers, // no Content-Type — the browser sets the multipart boundary
+        body: form,
+      });
+      if (!res.ok) {
+        const detail = await res.json().then((d) => d.detail).catch(() => null);
+        throw new Error(detail || "Vision search failed");
+      }
+      const data = await res.json();
+      const aiMsg: Message = {
+        id: `ai-${Date.now()}`,
+        sender: "ai",
+        text: data.reply || "Here's what I matched from your photo:",
+        intents: ["SEARCH"],
+        products: data.products?.length ? data.products : undefined,
+      };
+      commitMessages([...updatedMessages, aiMsg]);
+      speakResponse(aiMsg.text);
+    } catch (err) {
+      const text = err instanceof Error && err.message !== "Vision search failed"
+        ? err.message
+        : "Aiyo, I couldn't analyse that photo right now 😅 — please try again in a moment.";
+      const errMsg: Message = { id: `ai-${Date.now()}`, sender: "ai", text, intents: ["SEARCH"], isError: true };
+      commitMessages([...updatedMessages, errMsg]);
+    } finally {
+      setIsTyping(false);
+      setCurrentStatus(null);
+      if (imageInputRef.current) imageInputRef.current.value = "";
+    }
   };
 
   // ── Send message via SSE stream
@@ -304,8 +431,10 @@ export default function RukiPage() {
       localStorage.setItem("ruki_chat_history", JSON.stringify(updatedHistory));
     }
 
-    if (typeof window !== "undefined" && window.speechSynthesis) {
-      window.speechSynthesis.cancel();
+    // Interrupt any reply still being read aloud when the user sends a new
+    // message (the hands-free layer manages its own interruptions).
+    if (!accessibilityOpenRef.current) {
+      stopSpeech();
     }
 
     const ctx: Record<string, any> = {};
@@ -324,9 +453,10 @@ export default function RukiPage() {
     };
 
     try {
+      const headers = await authHeaders();
       const resp = await fetch(`${BACKEND_URL}/api/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...headers },
         signal: controller.signal,
         body: JSON.stringify({
           user_id: userIdRef.current,
@@ -340,7 +470,7 @@ export default function RukiPage() {
       });
       if (!resp.ok || !resp.body) throw new Error("SSE error");
 
-      const reader = resp.body.getReader(); 
+      const reader = resp.body.getReader();
       const dec = new TextDecoder("utf-8");
       let buf = "", fullText = "", sseIntents: string[] = [], sseProducts: Product[] = [], sseLatency = 0, hasError = false;
       let isCartActionTurn = false;
@@ -350,7 +480,7 @@ export default function RukiPage() {
         if (done) break;
         bumpStall();
         buf += dec.decode(value, { stream: true });
-        const parts = buf.split("\n\n"); 
+        const parts = buf.split("\n\n");
         buf = parts.pop() || "";
         for (const part of parts) {
           if (!part.trim()) continue;
@@ -370,10 +500,10 @@ export default function RukiPage() {
             else if (ev === "status") {
               setCurrentStatus(p.message || "");
             }
-            else if (ev === "text") { 
-              setIsTyping(false); 
-              fullText += p.text || ""; 
-              setStreamedText(fullText); 
+            else if (ev === "text") {
+              setIsTyping(false);
+              fullText += p.text || "";
+              setStreamedText(fullText);
             }
             else if (ev === "product_carousel") {
               if (!isCartActionTurn && (p.type === "[PRODUCT_CAROUSEL_DATA]" || p.products)) {
@@ -381,12 +511,52 @@ export default function RukiPage() {
               }
             }
             else if (ev === "cart_update") {
-              const products = p.products || [];
-              products.forEach((prod: Product) => {
-                handleAddToCart(prod);
+              const products: Product[] = p.products || [];
+              let mergedCart = cart;
+              products.forEach((prod) => {
+                mergedCart = mergeProductIntoCart(mergedCart, prod);
               });
-              if (p.trigger_checkout) {
-                setTimeout(() => { handleCreateOrderLink(); }, 400);
+              if (products.length > 0) {
+                const wasEmpty = cart.length === 0;
+                setCart(mergedCart);
+                if (wasEmpty) {
+                  fetch(`${BACKEND_URL}/api/delivery?city=Colombo`)
+                    .then(r => r.json()).then(d => { if (d.fee) setDeliveryFee(d.fee); }).catch(() => {});
+                }
+                if (window.innerWidth < 768) setRightOpen(true);
+              }
+
+              if (p.trigger_checkout && mergedCart.length > 0) {
+                const details: CheckoutDetails = {
+                  recipientName: p.recipient_name || "",
+                  deliveryAddress: p.delivery_address || "",
+                  contactNumber: p.contact_number || "",
+                  city: "Colombo",
+                  giftMessage: p.gift_message || undefined,
+                };
+                if (details.recipientName && details.deliveryAddress && details.contactNumber) {
+                  // Ruki captured everything conversationally — create the
+                  // order and open the click-to-pay link straight away.
+                  submitOrder(details, mergedCart).then((res) => {
+                    setCheckoutAutoResult(res);
+                    setCheckoutPrefill(undefined);
+                    setCheckoutOpen(true);
+                    if (res.status === "success" && res.checkoutUrl) {
+                      window.open(res.checkoutUrl, "_blank", "noopener,noreferrer");
+                    }
+                  });
+                } else {
+                  // Missing details — open the form pre-filled with whatever
+                  // was captured in the conversation.
+                  setCheckoutAutoResult(undefined);
+                  setCheckoutPrefill({
+                    recipientName: details.recipientName || undefined,
+                    deliveryAddress: details.deliveryAddress || undefined,
+                    contactNumber: details.contactNumber || undefined,
+                    giftMessage: details.giftMessage,
+                  });
+                  setCheckoutOpen(true);
+                }
               }
               setCurrentStatus(null);
               setIsTyping(false);
@@ -398,7 +568,7 @@ export default function RukiPage() {
       }
       const aiText = fullText || (hasError ? "A stream error occurred while fetching catalog items." : "I searched Kapruka but couldn't find matching results.");
       const productsToAttach = isCartActionTurn ? undefined : (sseProducts.length > 0 ? sseProducts : undefined);
-      
+
       const newAiMsg: Message = { id: `ai-${Date.now()}`, sender: "ai", text: aiText, intents: sseIntents, products: productsToAttach, latency: sseLatency, isError: hasError };
       const finalizedMessages = [...updatedMessages, newAiMsg];
       setMessages(finalizedMessages);
@@ -447,6 +617,20 @@ export default function RukiPage() {
     localStorage.removeItem(`ruki_chat_messages_${userIdRef.current}`);
   };
 
+  const handleDeleteHistoryItem = (id: string) => {
+    setChatHistory(prev => {
+      const next = prev.filter(h => h.id !== id);
+      localStorage.setItem("ruki_chat_history", JSON.stringify(next));
+      return next;
+    });
+    localStorage.removeItem(`ruki_chat_messages_${id}`);
+    // Deleting the chat currently open — drop into a fresh session so the
+    // view doesn't keep showing messages whose storage was just removed.
+    if (userIdRef.current === id) {
+      handleStartNewChat();
+    }
+  };
+
   // Convert Message array to ChatMessage format for AnimatedAIChat
   const chatMessages: ChatMessage[] = messages.map(m => ({
     id: m.id,
@@ -481,6 +665,9 @@ export default function RukiPage() {
       intents: ["THINKING"]
     });
   }
+
+  // Latest finished assistant reply — spoken aloud by the AccessibilityLayer.
+  const lastAiText = [...messages].reverse().find(m => m.sender === "ai")?.text || "";
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground antialiased font-sans">
@@ -556,7 +743,22 @@ export default function RukiPage() {
               >
                 Box is full!{" "}
                 <button
-                  onClick={handleCreateOrderLink}
+                  onClick={() => {
+                    // Gift Box items live in a separate staging area — merge
+                    // them into the real cart, then open the cart drawer so
+                    // the user reviews and buys on Kapruka from there.
+                    setCart(prev => {
+                      let next = prev;
+                      giftBoxItems.forEach(boxItem => {
+                        const hit = next.find(i => i.id === boxItem.id);
+                        next = hit
+                          ? next.map(i => i.id === boxItem.id ? { ...i, quantity: i.quantity + boxItem.quantity } : i)
+                          : [...next, { ...boxItem }];
+                      });
+                      return next;
+                    });
+                    setRightOpen(true);
+                  }}
                   className="underline underline-offset-2 cursor-pointer hover:text-amber/80 transition-colors"
                 >
                   Checkout now →
@@ -572,15 +774,13 @@ export default function RukiPage() {
         <AnimatedAIChat
           messages={chatMessages}
           onSendMessage={handleSendMessage}
-          isRecording={isMicActive}
-          onStartRecording={handleStartRecording}
-          onStopRecording={handleStopRecording}
-          isAudioMuted={!isAudioActive}
-          onToggleMute={() => setIsAudioActive(!isAudioActive)}
+          onOpenVoiceMode={() => setAccessibilityOpen(true)}
           sidebarOpen={leftOpen}
           onToggleSidebar={() => setLeftOpen(!leftOpen)}
           chatHistory={chatHistory}
           onSelectHistoryItem={handleSelectHistoryItem}
+          onDeleteHistoryItem={handleDeleteHistoryItem}
+          activeChatId={userIdRef.current}
           onStartNewChat={handleStartNewChat}
           guestId={guestLabel}
           theme={theme}
@@ -591,27 +791,63 @@ export default function RukiPage() {
           onAddToCart={handleAddToCart}
           onAddToBox={mode === "Gift Box Builder" ? handleAddToBox : undefined}
           activeMode={mode}
+          onAttachImage={() => imageInputRef.current?.click()}
+          authSlot={CLERK_ENABLED ? (collapsed) => (
+            <AuthPanel onIdentity={handleIdentity} collapsed={collapsed} theme={theme} onToggleTheme={toggleTheme} />
+          ) : undefined}
+        />
+
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/heic"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) handleImageSelected(file);
+          }}
         />
       </div>
 
-      <RightCart 
-        cart={cart} 
-        subtotal={subtotal} 
-        delivery={delivery} 
-        total={total} 
-        updateQuantity={updateQuantity} 
-        handleCreateOrderLink={handleCreateOrderLink} 
-        open={rightOpen} 
-        onClose={() => setRightOpen(false)} 
-        onGroupGift={handleGroupGift} 
+      <RightCart
+        cart={cart}
+        subtotal={subtotal}
+        delivery={delivery}
+        total={total}
+        updateQuantity={updateQuantity}
+        onRemoveItem={handleRemoveFromCart}
+        onCheckout={() => { setCheckoutAutoResult(undefined); setCheckoutPrefill(undefined); setCheckoutOpen(true); }}
+        open={rightOpen}
+        onClose={() => setRightOpen(false)}
+        onGroupGift={handleGroupGift}
       />
 
-      <GroupGiftModal 
-        open={isGroupGiftModalOpen} 
-        onClose={() => setIsGroupGiftModalOpen(false)} 
-        shareUrl={groupGiftLink} 
-        cart={cart} 
-        total={total} 
+      <CheckoutModal
+        open={checkoutOpen}
+        onClose={() => setCheckoutOpen(false)}
+        cart={cart}
+        total={total}
+        prefill={checkoutPrefill}
+        autoResult={checkoutAutoResult}
+        onSubmit={submitOrder}
+        onOpenProductPages={() => handleOpenProductPages()}
+      />
+
+      <GroupGiftModal
+        open={isGroupGiftModalOpen}
+        onClose={() => setIsGroupGiftModalOpen(false)}
+        shareUrl={groupGiftLink}
+        cart={cart}
+        total={total}
+      />
+
+      {/* Hands-free / low-vision Voice Assistant Mode */}
+      <AccessibilityLayer
+        open={accessibilityOpen}
+        onClose={() => setAccessibilityOpen(false)}
+        onSubmit={handleSendMessage}
+        isBusy={isTyping || !!streamedText}
+        lastResponse={lastAiText}
       />
 
       {/* Flying thumbnail animations for Gift Box Builder */}

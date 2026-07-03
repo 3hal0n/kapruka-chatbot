@@ -7,13 +7,15 @@ import logging
 import asyncio
 import time
 from typing import Dict, Any, Optional
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
 from agents.router import Router
+from agents.orchestrator import router as orchestrator_router
+from infrastructure.auth.clerk_auth import Identity, optional_identity
 
 # Setup logger
 logging.basicConfig(
@@ -84,6 +86,14 @@ async def lifespan(app: FastAPI):
         logger.info("Warmup complete and MCP client initialized. Ready to serve requests.")
     except Exception as e:
         logger.exception(f"Warmup failed: {e}")
+
+    # Pre-warm the Cloud TTS credential in the background (fire-and-forget) so
+    # the first voice reply doesn't pay the ADC token-refresh latency.
+    try:
+        from infrastructure.audio.tts import warm_up
+        asyncio.create_task(warm_up())
+    except Exception as e:
+        logger.warning(f"TTS warm-up not scheduled: {e}")
     yield
     # Shutdown MCP client connection
     try:
@@ -98,6 +108,12 @@ async def lifespan(app: FastAPI):
         await dispose_db()
     except Exception as e:
         logger.warning(f"Error disposing DB: {e}")
+    # Dispose the Cloud TTS HTTP client
+    try:
+        from infrastructure.audio.tts import close_http_client
+        await close_http_client()
+    except Exception as e:
+        logger.warning(f"Error closing TTS client: {e}")
     logger.info("Shutting down lifespan...")
 
 
@@ -116,6 +132,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Multi-agent orchestrator gateway: /api/agent/chat, /api/vision/search, /api/me/*
+app.include_router(orchestrator_router)
 
 
 class ChatRequest(BaseModel):
@@ -196,10 +215,14 @@ class OrderRequest(BaseModel):
 
 
 @app.post("/api/chat")
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(request: ChatRequest, identity: Identity = Depends(optional_identity)):
     """
     Accepts user message and streams back assistant responses and structured metadata
     using Server-Sent Events (SSE).
+
+    When a valid Clerk bearer token accompanies the request, the immutable
+    clerk_id supersedes the body's guest user_id so sessions, gift profiles and
+    the accumulated-context ledger all key off the authenticated identity.
     """
     if not request.message.strip():
         raise HTTPException(
@@ -207,7 +230,20 @@ async def chat_endpoint(request: ChatRequest):
             detail="Message cannot be empty."
         )
 
-    router = get_router(request.user_id)
+    effective_user_id = identity.user_id if identity.is_authenticated else request.user_id
+    router = get_router(effective_user_id)
+
+    # ── User Profile JSONB update hook ────────────────────────────────────────
+    # Fire-and-forget: the Persistent Context Profile Agent compares this turn
+    # against the stored accumulated_context and upserts the user_profiles row.
+    # Never blocks or fails the SSE stream.
+    try:
+        from agents.profile_agent import update_profile_for_user
+        asyncio.create_task(
+            update_profile_for_user(effective_user_id.strip() or "guest", request.message)
+        )
+    except Exception as e:
+        logger.warning(f"Profile update hook not scheduled: {e}")
 
     # Extract budget limit
     budget_limit = parse_budget_limit(request.message)
@@ -232,7 +268,7 @@ async def chat_endpoint(request: ChatRequest):
                 gift_profile = await get_profile_by_id(request.profile_id)
             if gift_profile is None:
                 gift_profile = await find_profile_by_recipient(
-                    request.user_id.strip() or "guest", request.message
+                    effective_user_id.strip() or "guest", request.message
                 )
             if gift_profile is not None:
                 gift_profile = gift_profile.to_dict()
@@ -574,6 +610,44 @@ async def create_group_gift(request: GroupGiftRequest):
         "item_count": len(request.cart),
         "total": request.total,
     }
+
+
+class TTSRequest(BaseModel):
+    text: str
+
+
+@app.post("/api/tts")
+async def tts_endpoint(request: TTSRequest):
+    """
+    Synthesize Ruki's spoken reply with Google Cloud Text-to-Speech
+    (female si-LK voice — native Sinhala + graceful English, billed to the
+    project's Vertex ADC credentials).
+
+    Returns raw MP3 bytes. On any synthesis failure responds 502 so the
+    frontend falls back to browser-native speech instead of going silent.
+    """
+    if not request.text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Text cannot be empty.",
+        )
+
+    from infrastructure.audio.tts import synthesize_speech, TTSUnavailableError
+
+    try:
+        audio = await synthesize_speech(request.text)
+    except TTSUnavailableError as e:
+        logger.warning(f"TTS synthesis unavailable: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Speech synthesis is temporarily unavailable.",
+        )
+
+    return Response(
+        content=audio,
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/health")

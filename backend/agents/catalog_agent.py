@@ -244,6 +244,46 @@ def calculate_match_score(product: dict, search_query: str, preferences: set, bu
     return min(score, 99)
 
 
+# ── Deterministic reply-language detection ────────────────────────────────────
+# The LLM keeps drifting (English question → Sinhala reply; romanised Tanglish
+# → Sinhala SCRIPT). Detect the user's script/language in Python and inject an
+# explicit directive instead of hoping the prompt rules hold.
+
+_SINHALA_SCRIPT_RE = re.compile(r"[඀-෿]")
+_ROMANIZED_SINHALA_RE = re.compile(
+    r"\b(?:mata|oyata|apita|mage|oyage|ekak|ekata|ekath|oni|onee|aiyo|aney|"
+    r"machan|puluwan|puluwanda|hadiyak|thiyenawa|thiyenawada|ganna|gannawa|"
+    r"karanna|denna|hoyanna|balanna|hoda|hodai|lassana|supiri|amma|thaththa|"
+    r"akka|malli|nangi|ayya|kade|gedara|salli|mokada|kohomada|wage|ehenam|"
+    r"naththam|nathnam|walata|walatada|kiyala|kiala|innawa|inne|yanna|enna|"
+    r"badu|genna|eya|eyata|eyage|kenek|kenekta|wayasa|hithuwa|deyak|dunnoth|"
+    r"denna|mn|mata)\b",
+    re.IGNORECASE,
+)
+
+
+def _reply_language_directive(user_raw_message: str) -> str:
+    """One unambiguous instruction line for the reply language/script."""
+    msg = user_raw_message or ""
+    if _SINHALA_SCRIPT_RE.search(msg):
+        return (
+            "REQUIRED REPLY LANGUAGE: SINHALA SCRIPT — the user typed native "
+            "Sinhala script, so reply fully in Sinhala script."
+        )
+    if _ROMANIZED_SINHALA_RE.search(msg):
+        return (
+            "REQUIRED REPLY LANGUAGE: TANGLISH IN LATIN LETTERS ONLY — the user "
+            "typed romanised Sinhala (Latin alphabet). Reply in that same casual "
+            "romanised Sinhala + English mix. Do NOT use a single Sinhala script "
+            "character (ය, ම, ඔ...) anywhere in the reply."
+        )
+    return (
+        "REQUIRED REPLY LANGUAGE: ENGLISH ONLY — the user's message contains no "
+        "Sinhala. Reply 100% in English with zero Sinhala or romanised-Sinhala "
+        "words, regardless of what language earlier turns used."
+    )
+
+
 def _sanitise_search_query(query: str) -> str:
     """
     Clean a search query before it is sent to the Kapruka MCP server.
@@ -301,6 +341,8 @@ def _sanitise_search_query(query: str) -> str:
         "walata", "welin", "kiyana", "side", "area", "district",
         "deliver", "delivery", "karanna", "puluwanda", "thiyenawa",
         "ekak", "hadanna", "enna", "oni", "wenne", "nehe",
+        # Sinhala "thing/stuff" fillers: "electronic deyak" → "electronic"
+        "deyak", "dewal", "badu", "genna",
         "for", "to", "from", "the", "a", "an",
         # Occasion words that sometimes leak from the router into the search query
         "fathers", "father's", "mothers", "mother's",
@@ -361,6 +403,67 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
         products = []
     else:
         products = [p for p in products if isinstance(p, dict)]
+
+    # ── GENERIC-TECH QUERY EXPANSION ─────────────────────────────────────────
+    # A bare "electronics" keyword search returns storefronts and utilitarian
+    # oddities (mosquito vaporizers, kitchen scales) — terrible for someone
+    # browsing tech or picking a tech gift. Expand into concrete, giftable
+    # tech categories and merge the pools.
+    GENERIC_TECH_TERMS = {
+        "electronic", "electronics", "electronic item", "electronic gift",
+        "gadget", "gadgets", "tech", "tech gift", "tech item",
+    }
+    if search_query.lower().strip() in GENERIC_TECH_TERMS:
+        _expansion_queries = ("wireless headphones", "bluetooth speaker", "smart watch")
+        # Fire the expansion searches CONCURRENTLY — sequential MCP round trips
+        # were adding 2-3s to every generic-tech turn.
+        _results = await asyncio.gather(
+            *(kapruka_search_products(eq, limit=CATALOG_SEARCH_TOP_K) for eq in _expansion_queries),
+            return_exceptions=True,
+        )
+        for eq, res in zip(_expansion_queries, _results):
+            if isinstance(res, Exception):
+                print(f"[TechExpansion] Query '{eq}' failed: {res}")
+                continue
+            extra = []
+            if isinstance(res, dict):
+                extra = res.get("products") or res.get("result") or []
+            elif isinstance(res, list):
+                extra = res
+            products.extend(p for p in extra if isinstance(p, dict))
+        seen_ids: set = set()
+        deduped_pool: list = []
+        for p in products:
+            pid = p.get("id") or p.get("code") or p.get("name")
+            if pid not in seen_ids:
+                seen_ids.add(pid)
+                deduped_pool.append(p)
+        products = deduped_pool
+        print(f"[TechExpansion] '{search_query}' expanded — pool now {len(products)} products.")
+
+    # ── STOREFRONT / SELLER-CARD FILTER ──────────────────────────────────────
+    # The MCP index contains seller storefront entries ("Dinapala Electronics"
+    # Rs. 140, "Tech Mart") that look like products. Heuristic: a very short
+    # name ending in a store-ish word with a token price is a storefront card,
+    # not a purchasable product.
+    _STOREFRONT_WORDS = {
+        "mart", "store", "stores", "shop", "electronics", "group",
+        "enterprises", "traders", "holdings", "agencies", "distributors",
+    }
+
+    def _looks_like_storefront(p: dict) -> bool:
+        name = str(p.get("name") or "").strip()
+        tokens = name.split()
+        if not tokens or len(tokens) > 4 or any(ch.isdigit() for ch in name):
+            return False
+        if tokens[-1].lower().strip(".,") not in _STOREFRONT_WORDS:
+            return False
+        return parse_product_price(p.get("price")) <= 500
+
+    pre_storefront = len(products)
+    products = [p for p in products if not _looks_like_storefront(p)]
+    if pre_storefront != len(products):
+        print(f"[StorefrontFilter] Dropped {pre_storefront - len(products)} seller-card entr(y/ies).")
 
     # ── ZERO-TRUST PRE-LLM ALLERGEN HARD-STOP ────────────────────────────────
     # This executes immediately after the raw MCP payload is parsed — before
@@ -453,19 +556,31 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
             if not fallback_queries:
                 fallback_queries = OCCASION_FALLBACKS["default"]
         
-        for fq in fallback_queries:
-            if fq.lower() == sq_lower and fq == search_query:
-                # Same query already tried — skip to avoid infinite loop
-                continue
-            try:
-                print(f"Low results for '{search_query}'. Trying fallback search query: '{fq}'")
-                fallback_res = await kapruka_search_products(fq, limit=CATALOG_SEARCH_TOP_K)
+        pending_queries = [
+            fq for fq in fallback_queries
+            if not (fq.lower() == sq_lower and fq == search_query)
+        ]
+        if pending_queries:
+            print(f"Low results for '{search_query}'. Trying fallbacks concurrently: {pending_queries}")
+            # All fallback searches fire CONCURRENTLY (they were sequential,
+            # stacking 1-2s of MCP latency per query onto slow turns); results
+            # merge in the original priority order.
+            fb_results = await asyncio.gather(
+                *(kapruka_search_products(fq, limit=CATALOG_SEARCH_TOP_K) for fq in pending_queries),
+                return_exceptions=True,
+            )
+            for fq, fallback_res in zip(pending_queries, fb_results):
+                if len(products) >= 5:
+                    break
+                if isinstance(fallback_res, Exception):
+                    print(f"Fallback query '{fq}' failed: {fallback_res}")
+                    continue
                 fb_products = []
                 if isinstance(fallback_res, dict):
                     fb_products = fallback_res.get("products") or fallback_res.get("result") or []
                 elif isinstance(fallback_res, list):
                     fb_products = fallback_res
-                
+
                 if fb_products:
                     fb_products = [p for p in fb_products if isinstance(p, dict)]
                     if budget_limit is not None:
@@ -480,10 +595,33 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
                             seen.add(pid)
                             deduped.append(p)
                     products = deduped
-                    if len(products) >= 5:
-                        break
-            except Exception as e:
-                print(f"Fallback query '{fq}' failed: {e}")
+
+    # ── CATEGORY FIDELITY FILTER ─────────────────────────────────────────────
+    # Kapruka's keyword search matches "flowers" against anything with the word
+    # in its title — including "Flower Ribbon Cake". When the user explicitly
+    # named a category, purge products from a conflicting category. Never
+    # filters down to an empty list (better off-category than nothing).
+    CATEGORY_CONFLICTS: list[tuple[set, set]] = [
+        # user asked for →       must not show
+        ({"flower", "flowers", "rose", "roses", "bouquet"}, {"cake", "cakes"}),
+        # For cake queries only ban unambiguous flower products (bouquets) —
+        # flower-DECORATED cakes ("Fresh Flowers Cake") are valid cake results.
+        ({"cake", "cakes"}, {"bouquet"}),
+    ]
+    _sq_tokens = set(re.findall(r"[a-z]+", search_query.lower()))
+    for _wanted, _banned in CATEGORY_CONFLICTS:
+        if (_sq_tokens & _wanted) and not (_sq_tokens & _banned):
+            def _off_category(p: dict, banned=_banned) -> bool:
+                hay = f"{p.get('name') or ''} {p.get('category') or ''}".lower()
+                return any(b in hay for b in banned)
+
+            _kept = [p for p in products if not _off_category(p)]
+            if _kept and len(_kept) < len(products):
+                print(
+                    f"[CategoryFidelity] Dropped {len(products) - len(_kept)} "
+                    f"off-category product(s) for query '{search_query}'."
+                )
+                products = _kept
 
     if not products:
         yield "Sorry! I couldn't find any products matching your description on Kapruka right now."
@@ -633,14 +771,17 @@ async def run_stream(recipients: set, search_query: str, old_profile: dict, new_
     context_block = "\n".join(context_notes) if context_notes else ""
 
     user_content = (
-        # Include the raw message FIRST so the LLM can detect the user's language
-        # and mirror it exactly — this is the most critical input for language matching.
-        f"User's original message (mirror this language exactly in your reply): {user_raw_message}\n\n"
+        # Deterministic language directive FIRST — computed in Python from the
+        # user's actual script so the model can't drift to the wrong language.
+        f"{_reply_language_directive(user_raw_message)}\n\n"
+        if user_raw_message else ""
+    ) + (
+        f"User's original message: {user_raw_message}\n\n"
         if user_raw_message else ""
     ) + (
         f"{context_block}\n" if context_block else ""
     ) + (
-        f"Recipients: {', '.join(str(r) for r in recipients) if recipients else 'someone special'}\n"
+        f"Recipients: {', '.join(str(r) for r in recipients) if recipients else 'yourself (no recipient named — treat as everyday self-shopping, not a gift)'}\n"
         f"Search: {search_query}\n\n"
         f"Matching products:\n" + "\n".join(product_lines)
     )

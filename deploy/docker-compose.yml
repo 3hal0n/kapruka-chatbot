@@ -2,8 +2,14 @@
 # Build contexts are relative to this file (deploy/), hence ../backend, ../frontend.
 #
 # Before deploying:
-#   1. Export GEMINI_API_KEY in the shell (or put it in deploy/.env).
-#   2. Public API URL is set to the live VM IP (35.200.247.15) — update here if it changes.
+#   1. AI credentials — pick ONE:
+#      a. Vertex AI ADC (zero-trust, recommended on GCP): set GOOGLE_GENAI_USE_VERTEXAI=true
+#         and GCP_PROJECT_ID in deploy/.env. The VM's IAM service account is used
+#         automatically (verify with: gcloud auth application-default print-access-token).
+#      b. AI Studio key (legacy): export GEMINI_API_KEY in the shell or deploy/.env.
+#   2. Clerk auth (optional — app runs guest-only without it): set
+#      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY and CLERK_ISSUER in deploy/.env.
+#   3. Public API URL is set to the live VM IP (35.200.247.15) — update here if it changes.
 
 services:
   db:
@@ -32,7 +38,15 @@ services:
     restart: unless-stopped
     environment:
       PORT: 8080
+      # ── Gemini access: Vertex ADC (preferred) or AI Studio key (fallback) ──
+      GOOGLE_GENAI_USE_VERTEXAI: ${GOOGLE_GENAI_USE_VERTEXAI:-}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-kapruka-chatbot}
+      GCP_LOCATION: ${GCP_LOCATION:-us-central1}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # ── Clerk JWT verification (optional; guest mode when unset) ──
+      CLERK_ISSUER: ${CLERK_ISSUER:-}
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL:-}
+      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-}
       DATABASE_URL: postgresql://ruki_admin:secure_db_password_2026@db:5432/ruki_memory
     ports:
       - "8080:8080"
@@ -43,13 +57,17 @@ services:
   frontend:
     build:
       context: ../frontend
-      # NEXT_PUBLIC_* must be baked at build time, so pass it as a build arg too.
+      # NEXT_PUBLIC_* must be baked at build time, so pass them as build args too.
       args:
         NEXT_PUBLIC_API_URL: http://35.200.247.15:8080
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
     container_name: ruki_frontend
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: http://35.200.247.15:8080
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+      # Server-side Clerk key used by proxy.ts (session hydration).
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
     ports:
       - "3000:3000"
     depends_on:

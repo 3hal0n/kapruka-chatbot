@@ -14,3 +14,8 @@ anyio
 SQLAlchemy>=2.0
 asyncpg          # PostgreSQL async driver (production)
 aiosqlite        # SQLite async driver (zero-config dev fallback)
+# Clerk auth (JWT verification against Clerk JWKS)
+PyJWT>=2.8
+cryptography     # RS256 support for PyJWT
+# Multipart image uploads (/api/vision/search)
+python-multipart
