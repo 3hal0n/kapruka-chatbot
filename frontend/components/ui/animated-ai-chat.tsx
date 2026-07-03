@@ -5,8 +5,6 @@ import {
   ArrowUp,
   Paperclip,
   Mic,
-  Volume2,
-  VolumeX,
   X,
   Menu,
   History,
@@ -47,12 +45,12 @@ interface AnimatedAIChatProps {
   isRecording?: boolean;
   onStartRecording?: () => void;
   onStopRecording?: () => void;
-  isAudioMuted?: boolean;
-  onToggleMute?: () => void;
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
   chatHistory?: { id: string; title: string; date: string }[];
   onSelectHistoryItem?: (id: string) => void;
+  onDeleteHistoryItem?: (id: string) => void;
+  activeChatId?: string;
   onStartNewChat?: () => void;
   introComponent?: React.ReactNode;
 
@@ -72,6 +70,12 @@ interface AnimatedAIChatProps {
   // Multimodal + quick-start controls in the input bar
   onAttachImage?: () => void;
   suggestions?: string[];
+
+  /** Renders in place of the static guest card in the sidebar's session slot
+   *  (e.g. Clerk sign-in / user-management). Receives whether the rail is
+   *  currently collapsed to icon-only width. Falls back to the plain guest
+   *  card when omitted (guest-only deployments). */
+  authSlot?: (collapsed: boolean) => React.ReactNode;
 }
 
 const DEFAULT_SUGGESTIONS = [
@@ -192,12 +196,12 @@ export function AnimatedAIChat({
   isRecording = false,
   onStartRecording,
   onStopRecording,
-  isAudioMuted = true,
-  onToggleMute,
   sidebarOpen = false,
   onToggleSidebar,
   chatHistory = [],
   onSelectHistoryItem,
+  onDeleteHistoryItem,
+  activeChatId,
   onStartNewChat,
   introComponent,
   theme = "light",
@@ -211,6 +215,7 @@ export function AnimatedAIChat({
   activeMode = "Smart Shopping",
   onAttachImage,
   suggestions = DEFAULT_SUGGESTIONS,
+  authSlot,
 }: AnimatedAIChatProps) {
   const [inputValue, setInputValue] = React.useState("");
   const [isFocused, setIsFocused] = React.useState(false);
@@ -458,19 +463,40 @@ export function AnimatedAIChat({
           </div>
         ) : (
           <div className="scroll-slim space-y-1">
-            {chatHistory.map((chatItem) => (
-              <button
-                key={chatItem.id}
-                onClick={() => {
-                  onSelectHistoryItem?.(chatItem.id);
-                  onCloseMobile?.();
-                }}
-                className="flex w-full flex-col gap-0.5 rounded-xl border border-transparent px-3 py-2.5 text-left transition-all duration-300 hover:border-border/30 hover:bg-primary-soft cursor-pointer"
-              >
-                <span className="truncate text-xs font-bold text-foreground/90">{chatItem.title}</span>
-                <span className="text-[10px] text-muted-foreground/60">{chatItem.date}</span>
-              </button>
-            ))}
+            {chatHistory.map((chatItem) => {
+              const isActive = activeChatId === chatItem.id;
+              return (
+                <div key={chatItem.id} className="group relative">
+                  <button
+                    onClick={() => {
+                      onSelectHistoryItem?.(chatItem.id);
+                      onCloseMobile?.();
+                    }}
+                    className={`flex w-full flex-col gap-0.5 rounded-xl border px-3 py-2.5 pr-9 text-left transition-all duration-300 cursor-pointer ${
+                      isActive
+                        ? "border-border/40 bg-primary-soft"
+                        : "border-transparent hover:border-border/30 hover:bg-primary-soft/60"
+                    }`}
+                  >
+                    <span className="truncate text-xs font-bold text-foreground/90">{chatItem.title}</span>
+                    <span className="text-[10px] text-muted-foreground/60">{chatItem.date}</span>
+                  </button>
+                  {onDeleteHistoryItem && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteHistoryItem(chatItem.id);
+                      }}
+                      aria-label={`Delete chat "${chatItem.title}"`}
+                      title="Delete chat"
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 grid h-7 w-7 place-items-center rounded-lg text-muted-foreground opacity-0 transition-all duration-200 hover:bg-red-500/10 hover:text-red-500 focus-visible:opacity-100 group-hover:opacity-100 cursor-pointer"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -487,23 +513,6 @@ export function AnimatedAIChat({
             {!collapsed && (theme === "light" ? "Dark mode" : "Light mode")}
           </button>
         )}
-        {onToggleMute && (
-          <button
-            onClick={onToggleMute}
-            title="Toggle voice output"
-            className={collapsed ? "flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer mx-auto" : toolBtn}
-          >
-            {isAudioMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4 text-primary" />}
-            {!collapsed && (
-              <>
-                Voice output
-                <span className="ml-auto text-[10px] font-black uppercase tracking-wider opacity-70">
-                  {isAudioMuted ? "Off" : "On"}
-                </span>
-              </>
-            )}
-          </button>
-        )}
         {onClearHistory && (
           <button
             onClick={onClearHistory}
@@ -516,8 +525,12 @@ export function AnimatedAIChat({
         )}
       </div>
 
-      {/* Guest / session card */}
+      {/* Guest / session card — swapped for real sign-in / user management
+          when authSlot is provided (Clerk enabled); plain guest chip otherwise. */}
       <div className={`shrink-0 border-t border-border p-3 ${collapsed ? "px-2" : ""}`}>
+        {authSlot ? (
+          authSlot(collapsed)
+        ) : (
         <div className={`flex items-center gap-2.5 rounded-xl px-2 py-2 ${collapsed ? "justify-center" : ""}`}>
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber text-xs font-black text-amber-foreground">
             {initials}
@@ -532,6 +545,7 @@ export function AnimatedAIChat({
             </>
           )}
         </div>
+        )}
       </div>
     </div>
   );
@@ -684,7 +698,7 @@ export function AnimatedAIChat({
                       <div
                         className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm select-text ${
                           message.role === "user"
-                            ? "bg-primary text-primary-foreground font-medium"
+                            ? "bg-linear-to-r from-primary-vivid to-primary-vivid-soft text-primary-foreground font-medium"
                             : "bg-primary-soft/60 border border-border/40 text-foreground"
                         }`}
                       >

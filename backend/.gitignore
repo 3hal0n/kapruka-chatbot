@@ -4,3 +4,4 @@ docs/
 
 
 .env
+gcp-service-account.json

@@ -42,35 +42,70 @@ class LLMUnavailableError(RuntimeError):
     """
 
 
-def is_mock_mode() -> bool:
+def _has_api_key() -> bool:
     api_key = os.getenv("GEMINI_API_KEY", "")
-    return not api_key or api_key in ("your_gemini_api_key", "")
+    return bool(api_key) and api_key != "your_gemini_api_key"
 
 
-def _use_vertex_express() -> bool:
-    """True when GOOGLE_GENAI_USE_VERTEXAI opts into Vertex AI Express Mode.
+def _use_vertex() -> bool:
+    """True when GOOGLE_GENAI_USE_VERTEXAI opts into routing through Vertex AI.
 
-    Express Mode authenticates with the same GEMINI_API_KEY (no ADC/service
-    account needed) but must set vertexai=True on the client so requests route
-    through the Vertex endpoint instead of the plain AI-Studio endpoint. Keys
-    minted from a Vertex-linked project (format "AQ.xxx...") only work this way.
+    Two sub-modes, both handled in _get_client():
+    - Express Mode: GEMINI_API_KEY present — same key, but vertexai=True routes
+      through the Vertex endpoint so usage bills to GCP_PROJECT_ID's billing
+      account instead of a standalone AI-Studio quota.
+    - ADC (service account): no GEMINI_API_KEY — authenticates via
+      GOOGLE_APPLICATION_CREDENTIALS (a downloaded service-account JSON key) or
+      the ambient gcloud/GCE credential, billed to GCP_PROJECT_ID.
     """
     return os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").strip().lower() in ("1", "true", "yes")
+
+
+def is_mock_mode() -> bool:
+    """Mock only when there's truly no way to reach a real model.
+
+    A configured API key is always "real". Absent a key, Vertex ADC counts as
+    real too — if the ADC credential turns out to be missing/invalid, the
+    actual API call fails and raises LLMUnavailableError (never silently mocked).
+    """
+    if _has_api_key():
+        return False
+    return not _use_vertex()
 
 
 _client_instance = None
 
 def _get_client() -> genai.Client:
-    """Return a configured async-capable Google GenAI client."""
+    """Return a configured async-capable Google GenAI client.
+
+    Auth priority:
+    1. Vertex Express Mode  — GOOGLE_GENAI_USE_VERTEXAI=true + GEMINI_API_KEY.
+    2. Vertex ADC           — GOOGLE_GENAI_USE_VERTEXAI=true, no key; uses
+                              GOOGLE_APPLICATION_CREDENTIALS (service-account
+                              JSON) or ambient gcloud/GCE credentials, billed
+                              to GCP_PROJECT_ID.
+    3. Plain AI-Studio key  — GOOGLE_GENAI_USE_VERTEXAI unset/false + GEMINI_API_KEY.
+    """
     global _client_instance
     if _client_instance is None:
-        api_key = os.getenv("GEMINI_API_KEY", "")
-        if not api_key or api_key == "your_gemini_api_key":
-            raise RuntimeError("GEMINI_API_KEY is not set in .env")
+        client_kwargs: dict = {}
 
-        client_kwargs = {"api_key": api_key}
-        if _use_vertex_express():
+        if _use_vertex() and _has_api_key():
             client_kwargs["vertexai"] = True
+            client_kwargs["api_key"] = os.environ["GEMINI_API_KEY"]
+        elif _use_vertex():
+            client_kwargs["vertexai"] = True
+            client_kwargs["project"] = os.environ.get("GCP_PROJECT_ID", "kapruka-chatbot")
+            client_kwargs["location"] = os.environ.get("GCP_LOCATION", "us-central1")
+        elif _has_api_key():
+            client_kwargs["api_key"] = os.environ["GEMINI_API_KEY"]
+        else:
+            raise RuntimeError(
+                "No Gemini credentials configured — set GEMINI_API_KEY, or set "
+                "GOOGLE_GENAI_USE_VERTEXAI=true with GOOGLE_APPLICATION_CREDENTIALS "
+                "pointing to a service-account JSON key."
+            )
+
         # On Windows, httpx's default dual-stack connect stalls ~20s on the
         # endpoint's IPv6 address before falling back to IPv4, and the SDK's
         # internal retries stack that into a 40s+ hang — even though `curl` and

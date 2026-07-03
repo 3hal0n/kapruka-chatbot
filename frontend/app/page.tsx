@@ -677,6 +677,20 @@ export default function RukiPage() {
     localStorage.removeItem(`ruki_chat_messages_${userIdRef.current}`);
   };
 
+  const handleDeleteHistoryItem = (id: string) => {
+    setChatHistory(prev => {
+      const next = prev.filter(h => h.id !== id);
+      localStorage.setItem("ruki_chat_history", JSON.stringify(next));
+      return next;
+    });
+    localStorage.removeItem(`ruki_chat_messages_${id}`);
+    // Deleting the chat currently open — drop into a fresh session so the
+    // view doesn't keep showing messages whose storage was just removed.
+    if (userIdRef.current === id) {
+      handleStartNewChat();
+    }
+  };
+
   // Convert Message array to ChatMessage format for AnimatedAIChat
   const chatMessages: ChatMessage[] = messages.map(m => ({
     id: m.id,
@@ -717,10 +731,6 @@ export default function RukiPage() {
 
   return (
     <div className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground antialiased font-sans">
-      {/* Clerk session chip — only mounted when a publishable key is configured,
-          because Clerk hooks require the <ClerkProvider> in layout.tsx. */}
-      {CLERK_ENABLED && <AuthPanel onIdentity={handleIdentity} />}
-
       {/* Gift Box Canvas for Gift Box Builder Mode */}
       <AnimatePresence>
         {mode === "Gift Box Builder" && (
@@ -828,12 +838,12 @@ export default function RukiPage() {
           isRecording={isMicActive}
           onStartRecording={handleStartRecording}
           onStopRecording={handleStopRecording}
-          isAudioMuted={!isAudioActive}
-          onToggleMute={() => setIsAudioActive(!isAudioActive)}
           sidebarOpen={leftOpen}
           onToggleSidebar={() => setLeftOpen(!leftOpen)}
           chatHistory={chatHistory}
           onSelectHistoryItem={handleSelectHistoryItem}
+          onDeleteHistoryItem={handleDeleteHistoryItem}
+          activeChatId={userIdRef.current}
           onStartNewChat={handleStartNewChat}
           guestId={guestLabel}
           theme={theme}
@@ -845,6 +855,9 @@ export default function RukiPage() {
           onAddToBox={mode === "Gift Box Builder" ? handleAddToBox : undefined}
           activeMode={mode}
           onAttachImage={() => imageInputRef.current?.click()}
+          authSlot={CLERK_ENABLED ? (collapsed) => (
+            <AuthPanel onIdentity={handleIdentity} collapsed={collapsed} theme={theme} onToggleTheme={toggleTheme} />
+          ) : undefined}
         />
 
         {/* Floating multimodal controls: photo search + hands-free voice mode */}
