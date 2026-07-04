@@ -38,6 +38,9 @@ import {
   BadgeCheck,
   Cloud,
   Coins,
+  GitCompare,
+  PenLine,
+  PackageSearch,
 } from "lucide-react";
 
 // ── Shared full-screen shell ──────────────────────────────────────────────────
@@ -181,6 +184,30 @@ const FEATURES: {
     detail:
       "Seamless OAuth and session abstraction through an integrated Clerk user-management surface. A verified clerk_id keys the persistent profile ledger and server-side cart, so context survives sign-outs, refreshes, and device switches.",
     example: "Sign in with Google → your cart is waiting",
+  },
+  {
+    icon: GitCompare,
+    title: "Conversational Product Comparison",
+    problem: "Zero form copy-pasting — just ask.",
+    detail:
+      "Ask Ruki to compare items on screen and she renders a clean side-by-side grid — title, price, availability, category — pulled straight from the session's live carousel, topped with a brief AI verdict on which one to pick and why.",
+    example: "“compare the first two” → side-by-side grid",
+  },
+  {
+    icon: PenLine,
+    title: "Integrated Contextual Card Composer",
+    problem: "The right words are half the gift.",
+    detail:
+      "Generates contextual, localized gift-card messages matching recipient attributes automatically — tone, relationship, and language (English, Sinhala script, or Tanglish) all steerable in plain conversation, then kept attached to your cart state.",
+    example: "“write a sweet card for my amma in Sinhala”",
+  },
+  {
+    icon: PackageSearch,
+    title: "Unified Logistics Tracker",
+    problem: "Tracking shouldn't mean leaving the conversation.",
+    detail:
+      "Real-time tracking status lookup embedded directly in the chat stream. Quote any order reference and the Logistics Agent queries Kapruka's live MCP tools, then streams a visual status journey — placed, packed, in transit, out for delivery, delivered.",
+    example: "“track order 218760” → live status journey",
   },
 ];
 

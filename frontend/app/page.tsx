@@ -124,6 +124,10 @@ export default function RukiPage() {
   // ── Vision search upload
   const imageInputRef = useRef<HTMLInputElement>(null);
 
+  // ── Gift-card message composed conversationally by Ruki (payload state,
+  // carried with the cart so it's ready to paste at Kapruka checkout).
+  const giftMessageRef = useRef<string | null>(null);
+
   // ── Authenticated fetch headers — attaches the Clerk session JWT when present
   const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
     const identity = identityRef.current;
@@ -515,6 +519,12 @@ export default function RukiPage() {
               }
             }
             else if (ev === "cart_update") {
+              // Conversationally-composed gift-card message rides along with
+              // the cart payload state (pasted at Kapruka checkout).
+              if (typeof p.gift_message === "string" && p.gift_message.trim()) {
+                giftMessageRef.current = p.gift_message.trim();
+              }
+
               // ── Removal operations (cart state lives here, so WE match) ──
               if (p.clear_cart) {
                 setCart([]);

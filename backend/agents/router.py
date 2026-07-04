@@ -48,6 +48,8 @@ class Router:
         # resolve against what the user is actually looking at — a fresh MCP
         # keyword search for the same words routinely returns a DIFFERENT item.
         self.last_products: list[dict] = []
+        # Composed gift-card message riding along with the cart payload state.
+        self.pending_gift_message: str | None = None
 
     def _detect_cart_action(self, user_message: str) -> dict | None:
         """
@@ -373,7 +375,276 @@ class Router:
             )
         return best
 
+    # ── Conversational side-by-side comparison ────────────────────────────────
+
+    _COMPARE_TRIGGER = (
+        r"\b(?:compare|comparison|vs\.?|versus|difference\s+between|"
+        r"which\s+(?:one\s+)?is\s+better|better\s+option)\b"
+    )
+
+    def _detect_compare(self, user_message: str) -> list[dict] | None:
+        """Resolve a comparison request against the on-screen carousel.
+
+        Returns 2-3 product dicts to compare, or None when this isn't a
+        comparison turn / fewer than two items can be resolved (the turn then
+        flows through the normal classifier — empty-state safe).
+        """
+        import re as _re
+
+        msg = (user_message or "").lower()
+        if not _re.search(self._COMPARE_TRIGGER, msg):
+            return None
+        candidates = [p for p in (self.last_products or []) if isinstance(p, dict)]
+        if len(candidates) < 2:
+            return None
+
+        picks: list[dict] = []
+
+        # 1. "compare the first two / top 3 / last two"
+        m = _re.search(r"\b(first|top|last)\s+(two|three|2|3)\b", msg)
+        if m:
+            n = 3 if m.group(2) in ("three", "3") else 2
+            picks = candidates[-n:] if m.group(1) == "last" else candidates[:n]
+        else:
+            # 2. Individual ordinals: "compare the first and the third"
+            idxs = sorted({
+                i for w, i in self._ORDINALS.items()
+                if _re.search(rf"\b{w}\b", msg) and i < len(candidates)
+            })
+            if len(idxs) >= 2:
+                picks = [candidates[i] for i in idxs[:3]]
+
+        if not picks:
+            # 3. Name fragments: "compare the s11 mini with the redmi watch"
+            IGNORE = self._CART_STOPWORDS | {
+                "compare", "comparison", "versus", "vs", "between", "difference",
+                "which", "better", "best", "option", "two", "three",
+            }
+
+            def frag_tokens(s: str) -> set[str]:
+                return {
+                    t[:-1] if len(t) > 3 and t.endswith("s") else t
+                    for t in _re.findall(r"[a-z0-9]+", s)
+                    if len(t) > 1 and t not in IGNORE
+                }
+
+            matched: list[dict] = []
+            for frag in _re.split(r"\bvs\.?\b|\bversus\b|\band\b|\bwith\b|,", msg):
+                ft = frag_tokens(frag)
+                if not ft:
+                    continue
+                best, best_key = None, (0, 0.0)
+                for pos, p in enumerate(candidates):
+                    nt = frag_tokens(str(p.get("name") or "").lower())
+                    overlap = len(ft & nt)
+                    if overlap == 0:
+                        continue
+                    coverage = overlap / len(ft)
+                    if overlap >= 2 or coverage >= 1.0:
+                        key = (overlap, coverage)
+                        if key > best_key:
+                            best, best_key = p, key
+                if best is not None and best not in matched:
+                    matched.append(best)
+            picks = matched[:3]
+
+        # 4. Bare "compare them / these" → the top two on screen
+        if len(picks) < 2 and _re.search(r"\b(?:them|these|those|all)\b", msg):
+            picks = candidates[:2]
+
+        return picks if len(picks) >= 2 else None
+
+    async def _run_comparison(self, products: list[dict], user_message: str):
+        """Stream a high-contrast comparison grid + a brief AI verdict."""
+        import asyncio
+        from agents.catalog_agent import parse_product_price, _reply_language_directive
+
+        classification = {
+            "intents": ["COMPARE"], "allergies": {}, "preferences": {},
+            "search_recipient": None, "location": None, "deadline": None,
+            "search_query": None, "budget_limit": None, "tracking_code": None,
+            "cart_items": None, "trigger_checkout": False,
+        }
+        yield f"<<CLASSIFICATION>>:{json.dumps(classification)}"
+        # Re-surface the compared items as a carousel under the grid.
+        yield f"<<PRODUCTS>>:{json.dumps(products)}"
+
+        def cell(v: object) -> str:
+            return str(v if v is not None else "—").replace("|", "/").replace("\n", " ").strip()
+
+        names, prices, avail, cats = [], [], [], []
+        for p in products:
+            names.append(cell(p.get("name", "Item"))[:48])
+            price_val = parse_product_price(p.get("price"))
+            prices.append(f"Rs. {price_val:,.0f}" if price_val else cell(p.get("price")))
+            avail.append(cell(p.get("availability") or p.get("stock") or "Unknown"))
+            cats.append(cell(p.get("category") or "—"))
+
+        table = "\n".join([
+            "| | " + " | ".join(names) + " |",
+            "|---" * (len(products) + 1) + "|",
+            "| Price | " + " | ".join(prices) + " |",
+            "| Availability | " + " | ".join(avail) + " |",
+            "| Category | " + " | ".join(cats) + " |",
+        ])
+        grid_text = "Here's the side-by-side 👇\n\n" + table + "\n\n"
+        yield grid_text
+
+        # Brief structural AI recommendation (deterministic fallback on failure).
+        recommendation = ""
+        try:
+            from infrastructure.llm.client import is_mock_mode
+            if not is_mock_mode():
+                rec_system = (
+                    "You are Ruki, Kapruka's sharp shopping concierge. Given the compared "
+                    "products (JSON) and the user's request, give ONE brief recommendation: "
+                    "which to pick and why, in at most 2 sentences. No markdown, no lists. "
+                    + _reply_language_directive(user_message)
+                )
+                recommendation = (await asyncio.to_thread(
+                    chat,
+                    rec_system,
+                    [{"role": "user", "content": f"Products: {json.dumps(products)}\nUser asked: {user_message}"}],
+                    180,
+                    CLAUDE_MODEL_CLASSIFY,
+                    False,
+                    0.6,
+                )).strip()
+        except Exception as e:
+            print(f"[Compare] Recommendation LLM failed, using deterministic pick: {e}")
+
+        if not recommendation:
+            in_stock = [p for p in products if "out" not in str(p.get("availability") or "").lower()]
+            pool = in_stock or products
+            cheapest = min(pool, key=lambda p: parse_product_price(p.get("price")) or float("inf"))
+            c_price = parse_product_price(cheapest.get("price"))
+            recommendation = (
+                f"My quick take: {cell(cheapest.get('name'))} is the strongest value here"
+                + (f" at Rs. {c_price:,.0f}" if c_price else "")
+                + " and it's ready to ship."
+            )
+        yield recommendation
+
+        self.st_memory.add_message("user", user_message + " " + json.dumps(classification))
+        self.st_memory.add_message("assistant", grid_text + recommendation)
+
+    # ── Conversational gift-card message composer ─────────────────────────────
+
+    _GIFT_MSG_TRIGGER = (
+        r"\b(?:write|compose|create|draft|generate|make(?:\s+up)?|liyanna|liyala)\b"
+        r".{0,40}\b(?:gift\s*card|card|greeting|message|note|wish(?:es)?)\b"
+        r"|\bgift\s+message\s+ekak\b"
+        r"|\badd\s+a\s+(?:card|note)\s+saying\b"
+    )
+
+    def _detect_gift_message_request(self, user_message: str) -> bool:
+        import re as _re
+        return bool(_re.search(self._GIFT_MSG_TRIGGER, (user_message or "").lower()))
+
+    async def _run_gift_message(self, user_message: str):
+        """Compose a localized gift-card message and attach it to the cart state."""
+        import asyncio
+        import re as _re
+        from agents.catalog_agent import _reply_language_directive
+
+        classification = {
+            "intents": ["GIFT_MESSAGE"], "allergies": {}, "preferences": {},
+            "search_recipient": None, "location": None, "deadline": None,
+            "search_query": None, "budget_limit": None, "tracking_code": None,
+            "cart_items": None, "trigger_checkout": False,
+        }
+        yield f"<<CLASSIFICATION>>:{json.dumps(classification)}"
+
+        # Verbatim text in quotes wins outright ("add a card saying 'Happy Bday Amma'").
+        quoted = _re.search(r"[\"“'‘]([^\"”'’]{3,200})[\"”'’]", user_message)
+        message: str = ""
+        if quoted:
+            message = quoted.group(1).strip()
+        else:
+            try:
+                from infrastructure.llm.client import is_mock_mode
+                if not is_mock_mode():
+                    compose_system = (
+                        "You are Ruki, Kapruka's concierge, writing a gift-card message. "
+                        "Honour any tone, relationship, occasion or language the user asked for. "
+                        "2-4 short heartfelt sentences. Output ONLY the card message text — "
+                        "no quotes, no preamble, no signature placeholders. "
+                        + _reply_language_directive(user_message)
+                    )
+                    message = (await asyncio.to_thread(
+                        chat,
+                        compose_system,
+                        [{"role": "user", "content": user_message}],
+                        220,
+                        CLAUDE_MODEL_CLASSIFY,
+                        False,
+                        0.8,
+                    )).strip().strip('"“”')
+            except Exception as e:
+                print(f"[GiftMessage] Compose LLM failed, using template: {e}")
+        if not message:
+            message = (
+                "Wishing you every bit of joy this special day deserves — "
+                "may it be filled with laughter, love, and a little Kapruka magic. 🎁"
+            )
+
+        # Payload state: ride the cart_update channel so the frontend keeps the
+        # message alongside the cart without any external form.
+        self.pending_gift_message = message
+        yield f"<<CART_UPDATE>>:{json.dumps({'products': [], 'trigger_checkout': False, 'gift_message': message})}"
+
+        reply = (
+            f"Here's your card message ✍️\n\n“{message}”\n\n"
+            "I've attached it to your cart details — paste it into the gift-note box at "
+            "Kapruka checkout, or ask me to rewrite it in a different tone or language."
+        )
+        yield reply
+        self.st_memory.add_message("user", user_message + " " + json.dumps(classification))
+        self.st_memory.add_message("assistant", reply)
+
+    # ── Dynamic parcel-tracking interceptor ───────────────────────────────────
+
+    def _detect_tracking(self, user_message: str) -> dict | None:
+        """Intercept tracking-reference turns ("track order 218760") without an
+        LLM round-trip. The captured code must contain at least one digit so
+        phrases like "track my last order" fall through to the classifier."""
+        import re as _re
+
+        msg = user_message or ""
+        m = _re.search(
+            r"\btrack(?:ing)?\b\s*(?:my\s+)?(?:order|parcel|package|delivery)?\s*"
+            r"(?:number|no\.?|#)?\s*((?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{4,})",
+            msg, _re.IGNORECASE,
+        )
+        if not m:
+            m = _re.search(
+                r"\bwhere(?:'s|\s+is)\s+my\s+(?:order|parcel|package)\s*#?\s*"
+                r"((?=[A-Za-z0-9-]*\d)[A-Za-z0-9-]{4,})",
+                msg, _re.IGNORECASE,
+            )
+        if not m:
+            return None
+        code = m.group(1)
+        print(f"[TrackingInterceptor] Forced LOGISTICS — tracking code: '{code}'")
+        return {
+            "intents": ["LOGISTICS"],
+            "allergies": {}, "preferences": {},
+            "search_recipient": None, "location": None, "deadline": None,
+            "search_query": None, "budget_limit": None,
+            "tracking_code": code,
+            "cart_items": None, "cart_remove_items": None, "clear_cart": False,
+            "trigger_checkout": False, "recipient_name": None,
+            "delivery_address": None, "contact_number": None, "gift_message": None,
+        }
+
     def classify_intents(self, user_message: str) -> dict:
+
+        # ── Pre-LLM tracking interceptor ──────────────────────────────────────
+        # "track order 218760" needs zero classification — go straight to the
+        # logistics agent with the extracted reference.
+        tracked = self._detect_tracking(user_message)
+        if tracked is not None:
+            return tracked
 
         # ── Pre-LLM cart-action interceptor ───────────────────────────────────
         # Catches unambiguous action phrases ("add to cart", "buy it", "checkout")
@@ -623,6 +894,25 @@ class Router:
         """Streaming version of route() — yields chunks for SEARCH responses."""
         import asyncio
 
+        # ── COMPARISON SHORT-CIRCUIT ─────────────────────────────────────────
+        # "compare the first two" / "s11 vs redmi" against the on-screen
+        # carousel: fully deterministic resolution, zero classifier round-trip.
+        compare_products = self._detect_compare(user_message)
+        if compare_products:
+            print(f"[Router] Comparison turn — {len(compare_products)} items resolved from carousel.")
+            async for chunk in self._run_comparison(compare_products, user_message):
+                yield chunk
+            return
+
+        # ── GIFT-MESSAGE SHORT-CIRCUIT ───────────────────────────────────────
+        # "write a sweet card for my amma in Sinhala" → compose + attach to the
+        # cart payload state conversationally, no external form.
+        if self._detect_gift_message_request(user_message):
+            print("[Router] Gift-message composition turn.")
+            async for chunk in self._run_gift_message(user_message):
+                yield chunk
+            return
+
         # ── PROFILE SHORT-CIRCUIT ─────────────────────────────────────────────
         # When the turn references a saved Occasion Vibe Calendar profile, bypass
         # the conversational intent classifier entirely and load the profile's
@@ -782,7 +1072,9 @@ class Router:
                     "recipient_name": classification.get("recipient_name"),
                     "delivery_address": classification.get("delivery_address"),
                     "contact_number": classification.get("contact_number"),
-                    "gift_message": classification.get("gift_message"),
+                    # A conversationally-composed card message stays attached to
+                    # the cart payload state until the user replaces it.
+                    "gift_message": classification.get("gift_message") or self.pending_gift_message,
                 }
                 yield f"<<CART_UPDATE>>:{json.dumps(cart_update_payload)}"
 
@@ -792,6 +1084,8 @@ class Router:
                 confirm_msg = f"Done! I've added {names} to your cart. "
                 if trigger_checkout:
                     confirm_msg += "Generating your checkout link now..."
+                else:
+                    confirm_msg += "Want a gift-card message to go with it? Just ask me to write one ✍️"
                 yield confirm_msg
                 full_response_chunks.append(confirm_msg)
             elif trigger_checkout:
