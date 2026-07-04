@@ -28,6 +28,9 @@ class RouterOutput(BaseModel):
     budget_limit: float | None = None   # LLM-extracted numeric budget ceiling in LKR
     tracking_code: str | None
     cart_items: list[CartItemQuery] | None = None
+    # Cart removal operations ("remove the roses", "clear my cart")
+    cart_remove_items: list[CartItemQuery] | None = None
+    clear_cart: bool | None = False
     trigger_checkout: bool | None = False
     recipient_name: str | None = None
     delivery_address: str | None = None
@@ -69,6 +72,42 @@ class Router:
             msg
         ):
             return None
+
+        # ── Cart REMOVAL / CLEAR interceptor (checked before the add patterns) ─
+        _removal_base = {
+            "intents": ["CART_ACTION"],
+            "allergies": {}, "preferences": {},
+            "search_recipient": None, "location": None, "deadline": None,
+            "search_query": None, "budget_limit": None, "tracking_code": None,
+            "cart_items": [], "trigger_checkout": False,
+            "recipient_name": None, "delivery_address": None,
+            "contact_number": None, "gift_message": None,
+        }
+
+        CLEAR_PATTERNS = [
+            r"\b(?:clear|empty|reset|wipe)\b.*\bcart\b",
+            r"\bcart\b.*\b(?:clear|empty|reset|wipe)\b",          # "cart eka clear karanna"
+            r"\b(?:remove|delete|take\s+out)\s+(?:all|everything)\b",
+            r"\b(?:remove|delete)\s+all\s+(?:the\s+)?items?\b",
+        ]
+        for pattern in CLEAR_PATTERNS:
+            if _re.search(pattern, msg):
+                print(f"[CartInterceptor] Forced CART CLEAR — matched pattern: '{pattern}'")
+                return {**_removal_base, "clear_cart": True, "cart_remove_items": None}
+
+        remove_match = _re.search(
+            r"\b(?:remove|delete|take\s+out|take)\s+(?:the\s+)?(.+?)\s+"
+            r"(?:out\s+)?(?:from|off|out\s+of)\s+(?:the\s+|my\s+)?cart\b",
+            msg,
+        )
+        if remove_match:
+            remove_query = remove_match.group(1).strip()
+            print(f"[CartInterceptor] Forced CART REMOVE — item query: '{remove_query}'")
+            return {
+                **_removal_base,
+                "clear_cart": False,
+                "cart_remove_items": [{"query": remove_query, "quantity": 1}],
+            }
 
         # Canonical cart-action trigger phrases — order matters (most specific first)
         CART_PATTERNS = [
@@ -654,13 +693,41 @@ class Router:
 
         # Handle CART_ACTION
         cart_products_to_add = []
+        cart_removal_handled = False
         if "CART_ACTION" in intents:
+            # ── Removal / clear operations first ─────────────────────────────
+            # The cart itself lives in the frontend, so the backend only names
+            # WHAT to remove; the frontend matches it against its own items.
+            _clear_cart = bool(classification.get("clear_cart"))
+            _remove_items = classification.get("cart_remove_items") or []
+            _remove_queries = [
+                str(ri.get("query")).strip()
+                for ri in _remove_items
+                if isinstance(ri, dict) and str(ri.get("query") or "").strip()
+            ]
+            if _clear_cart or _remove_queries:
+                cart_removal_handled = True
+                removal_payload = {
+                    "clear_cart": _clear_cart,
+                    "remove_queries": _remove_queries,
+                    "products": [],
+                    "trigger_checkout": False,
+                }
+                yield f"<<CART_UPDATE>>:{json.dumps(removal_payload)}"
+                if _clear_cart:
+                    confirm_msg = "All done — your cart is empty now! 🛒 Fresh start, what shall we find next?"
+                else:
+                    confirm_msg = f"Done! I've taken {', '.join(_remove_queries)} out of your cart."
+                yield confirm_msg
+                full_response_chunks.append(confirm_msg)
+
             cart_items = classification.get("cart_items") or []
             trigger_checkout = classification.get("trigger_checkout") or False
 
             # Pronoun-only add ("add it to my cart") arrives with no cart_items
             # query — resolve it against the carousel the user is looking at.
-            if not cart_items and not trigger_checkout and _re.search(
+            # Never on a removal turn ("take that out of the cart" must not ADD).
+            if not cart_removal_handled and not cart_items and not trigger_checkout and _re.search(
                 r"\b(?:add|buy|take|get|put)\b.*\b(?:it|that|this|one)\b",
                 user_message, _re.IGNORECASE,
             ):
@@ -731,7 +798,7 @@ class Router:
                 confirm_msg = "Perfect! Generating your checkout link now. Please review the details in the popup..."
                 yield confirm_msg
                 full_response_chunks.append(confirm_msg)
-            elif "SEARCH" not in intents:
+            elif "SEARCH" not in intents and not cart_removal_handled:
                 # A cart command we couldn't resolve — say so instead of ending
                 # the stream silently (which surfaced as the frontend's generic
                 # "couldn't find matching results" fallback).

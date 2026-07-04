@@ -142,15 +142,27 @@ body {
   text-shadow: 0 0 38px var(--primary-glow);
 }
 
-/* Animated gradient sheen for the hero headline */
+/* Animated gradient sheen for the hero headline.
+   Light mode: deep Kapruka purple blending through vivid violet into gold —
+   dark enough to hold contrast on the white canvas. */
 .text-aurora {
-  background: linear-gradient(110deg, #F4F1F8 10%, #C8B3E4 35%, #FFD700 50%, #C8B3E4 65%, #F4F1F8 90%);
+  background: linear-gradient(110deg, #3C1B63 8%, #6D28D9 32%, #FFB300 50%, #6D28D9 68%, #3C1B63 92%);
   background-size: 200% auto;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
   animation: aurora-pan 6s linear infinite;
+}
+
+/* Dark mode keeps the luminous pale-violet/gold sheen (a dark gradient would
+   vanish against the carbon-black canvas). `background` shorthand resets
+   background-size, so re-declare it. */
+.dark .text-aurora {
+  background: linear-gradient(110deg, #F4F1F8 10%, #C8B3E4 35%, #FFD700 50%, #C8B3E4 65%, #F4F1F8 90%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
 }
 
 @keyframes aurora-pan {

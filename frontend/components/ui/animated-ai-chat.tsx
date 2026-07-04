@@ -22,6 +22,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ChevronDown,
+  Lightbulb,
+  Network,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ProductCard, Product } from "@/components/ProductCard";
@@ -57,6 +59,8 @@ interface AnimatedAIChatProps {
   // Theme & tools (hosted in the sidebar, not a top navbar)
   theme?: "light" | "dark";
   onToggleTheme?: () => void;
+  onOpenFeatures?: () => void;
+  onOpenArchitecture?: () => void;
   onClearHistory?: () => void;
   onToggleCart?: () => void;
   cartCount?: number;
@@ -197,6 +201,8 @@ export function AnimatedAIChat({
   introComponent,
   theme = "light",
   onToggleTheme,
+  onOpenFeatures,
+  onOpenArchitecture,
   onClearHistory,
   onToggleCart,
   cartCount = 0,
@@ -487,6 +493,32 @@ export function AnimatedAIChat({
 
       {/* Utility tray */}
       <div className={`shrink-0 space-y-0.5 border-t border-border p-3 ${collapsed ? "px-2" : ""}`}>
+        {onOpenFeatures && (
+          <button
+            onClick={() => {
+              onOpenFeatures();
+              onCloseMobile?.();
+            }}
+            title="Features & Guide"
+            className={collapsed ? "flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer mx-auto" : toolBtn}
+          >
+            <Lightbulb className="h-4 w-4" />
+            {!collapsed && "Features & Guide"}
+          </button>
+        )}
+        {onOpenArchitecture && (
+          <button
+            onClick={() => {
+              onOpenArchitecture();
+              onCloseMobile?.();
+            }}
+            title="Tech Architecture"
+            className={collapsed ? "flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer mx-auto" : toolBtn}
+          >
+            <Network className="h-4 w-4" />
+            {!collapsed && "Tech Architecture"}
+          </button>
+        )}
         {onToggleTheme && (
           <button
             onClick={onToggleTheme}
