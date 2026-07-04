@@ -90,13 +90,13 @@ const DEFAULT_SUGGESTIONS = [
 ];
 
 // Rotating input-placeholder examples — quietly teaches what Ruki can do.
+// Kept short and action-oriented so the same array fits on every screen size
+// (the CSS safety net below also forces single-line clipping as a backstop).
 const PLACEHOLDER_EXAMPLES = [
-  "Find a birthday cake under Rs. 5000…",
-  "I need anniversary flowers delivered to Colombo…",
-  "Compare Samsung phones…",
-  "Suggest a gift hamper for my ammi…",
-  "mata ammata gift ekak oni…",
-  "Track my order #218760…",
+  "Find a birthday cake...",
+  "Compare Samsung phones...",
+  "Suggest a gift hamper...",
+  "Track my order...",
 ];
 
 /** Typewriter placeholder: types each example, pauses, wipes, moves on.
@@ -117,7 +117,8 @@ function useTypingPlaceholder(active: boolean): string {
     let timer: ReturnType<typeof setTimeout>;
 
     const tick = () => {
-      const phrase = PLACEHOLDER_EXAMPLES[phraseIdx];
+      const examples = PLACEHOLDER_EXAMPLES;
+      const phrase = examples[phraseIdx % examples.length];
       if (!deleting) {
         charIdx += 1;
         setText(phrase.slice(0, charIdx));
@@ -132,7 +133,7 @@ function useTypingPlaceholder(active: boolean): string {
         setText(phrase.slice(0, charIdx) || " ");
         if (charIdx === 0) {
           deleting = false;
-          phraseIdx = (phraseIdx + 1) % PLACEHOLDER_EXAMPLES.length;
+          phraseIdx = (phraseIdx + 1) % examples.length;
           timer = setTimeout(tick, 420);
           return;
         }
@@ -551,7 +552,7 @@ export function AnimatedAIChat({
           onBlur={() => setIsFocused(false)}
           placeholder={typedPlaceholder}
           aria-label="Message Ruki"
-          className="max-h-32 min-h-[24px] flex-1 resize-none self-center overflow-y-auto bg-transparent py-1.5 text-sm leading-relaxed outline-none placeholder:text-muted-foreground/60 select-text"
+          className="max-h-32 min-h-[24px] flex-1 resize-none self-center overflow-y-auto bg-transparent py-1.5 text-xs tracking-tight leading-relaxed outline-none placeholder:text-muted-foreground/60 placeholder:whitespace-nowrap placeholder:overflow-hidden select-text sm:text-sm md:text-base md:tracking-normal"
         />
 
         <div className="flex shrink-0 items-center gap-1.5">
