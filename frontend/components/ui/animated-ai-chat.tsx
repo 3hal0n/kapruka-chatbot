@@ -22,6 +22,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   ChevronDown,
+  Lightbulb,
+  Network,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ProductCard, Product } from "@/components/ProductCard";
@@ -57,6 +59,8 @@ interface AnimatedAIChatProps {
   // Theme & tools (hosted in the sidebar, not a top navbar)
   theme?: "light" | "dark";
   onToggleTheme?: () => void;
+  onOpenFeatures?: () => void;
+  onOpenArchitecture?: () => void;
   onClearHistory?: () => void;
   onToggleCart?: () => void;
   cartCount?: number;
@@ -156,6 +160,93 @@ function ThinkingIndicator({ status }: { status?: string | null }) {
   );
 }
 
+// ── Lightweight markdown-table rendering for assistant replies ───────────────
+// The comparison agent streams pipe-tables; everything else stays plain text.
+// A 40-line parser beats shipping a full markdown library for one construct.
+
+type ContentSegment = { type: "text"; text: string } | { type: "table"; rows: string[][] };
+
+function parseContentSegments(content: string): ContentSegment[] {
+  const segments: ContentSegment[] = [];
+  let textBuf: string[] = [];
+  let tableRows: string[][] = [];
+
+  const flushText = () => {
+    const text = textBuf.join("\n");
+    if (text.trim()) segments.push({ type: "text", text });
+    textBuf = [];
+  };
+  const flushTable = () => {
+    if (tableRows.length >= 2) segments.push({ type: "table", rows: tableRows });
+    else if (tableRows.length) textBuf.push(tableRows.map((r) => r.join(" | ")).join("\n"));
+    tableRows = [];
+  };
+
+  for (const line of content.split("\n")) {
+    const t = line.trim();
+    if (t.startsWith("|") && t.endsWith("|") && t.length > 2) {
+      const cells = t.slice(1, -1).split("|").map((c) => c.replace(/\*\*/g, "").trim());
+      const isSeparator = cells.every((c) => c === "" || /^:?-{2,}:?$/.test(c));
+      if (!isSeparator) {
+        if (tableRows.length === 0) flushText();
+        tableRows.push(cells);
+      }
+    } else {
+      flushTable();
+      textBuf.push(line);
+    }
+  }
+  flushTable();
+  flushText();
+  return segments;
+}
+
+function AssistantContent({ content }: { content: string }) {
+  const segments = React.useMemo(() => parseContentSegments(content), [content]);
+  if (segments.length === 1 && segments[0].type === "text") {
+    return <div className="whitespace-pre-wrap leading-relaxed">{content}</div>;
+  }
+  return (
+    <div className="space-y-1">
+      {segments.map((seg, i) =>
+        seg.type === "text" ? (
+          <div key={i} className="whitespace-pre-wrap leading-relaxed">{seg.text}</div>
+        ) : (
+          <div key={i} className="my-1.5 overflow-x-auto rounded-xl border border-border bg-surface">
+            <table className="w-full min-w-max text-left text-xs">
+              <thead>
+                <tr className="bg-primary-soft">
+                  {seg.rows[0].map((cell, ci) => (
+                    <th key={ci} className="px-3 py-2 font-black tracking-tight text-foreground">
+                      {cell}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {seg.rows.slice(1).map((row, ri) => (
+                  <tr key={ri} className="border-t border-border">
+                    {row.map((cell, ci) => (
+                      <td
+                        key={ci}
+                        className={`px-3 py-2 ${
+                          ci === 0 ? "font-bold text-foreground" : "font-medium text-foreground/90"
+                        }`}
+                      >
+                        {cell}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
 const isNoMatchesOrError = (msg: Message): boolean => {
   if (msg.role !== "assistant") return false;
   if (msg.isError) return true;
@@ -197,6 +288,8 @@ export function AnimatedAIChat({
   introComponent,
   theme = "light",
   onToggleTheme,
+  onOpenFeatures,
+  onOpenArchitecture,
   onClearHistory,
   onToggleCart,
   cartCount = 0,
@@ -487,6 +580,32 @@ export function AnimatedAIChat({
 
       {/* Utility tray */}
       <div className={`shrink-0 space-y-0.5 border-t border-border p-3 ${collapsed ? "px-2" : ""}`}>
+        {onOpenFeatures && (
+          <button
+            onClick={() => {
+              onOpenFeatures();
+              onCloseMobile?.();
+            }}
+            title="Features & Guide"
+            className={collapsed ? "flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer mx-auto" : toolBtn}
+          >
+            <Lightbulb className="h-4 w-4" />
+            {!collapsed && "Features & Guide"}
+          </button>
+        )}
+        {onOpenArchitecture && (
+          <button
+            onClick={() => {
+              onOpenArchitecture();
+              onCloseMobile?.();
+            }}
+            title="Tech Architecture"
+            className={collapsed ? "flex h-10 w-10 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground cursor-pointer mx-auto" : toolBtn}
+          >
+            <Network className="h-4 w-4" />
+            {!collapsed && "Tech Architecture"}
+          </button>
+        )}
         {onToggleTheme && (
           <button
             onClick={onToggleTheme}
@@ -686,7 +805,11 @@ export function AnimatedAIChat({
                             : "bg-primary-soft/60 border border-border/40 text-foreground"
                         }`}
                       >
-                        <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>
+                        {message.role === "assistant" ? (
+                          <AssistantContent content={message.content} />
+                        ) : (
+                          <div className="whitespace-pre-wrap leading-relaxed">{message.content}</div>
+                        )}
                         {message.role === "assistant" && message.latency !== undefined && message.latency > 0 && (
                           <div className="mt-1.5 text-right text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/60 select-none">
                             {message.latency.toFixed(0)}ms

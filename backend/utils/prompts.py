@@ -122,7 +122,11 @@ STEP 3 — STRICT FIELD EXTRACTION RULES
   • "tomorrow" / "sunday" → as stated
   • If no event mentioned → null.
 "tracking_code": 12-digit numeric string if present, else null.
-"cart_items": list of {"query": string, "quantity": int} or null.
+"cart_items": list of {"query": string, "quantity": int} or null — items to ADD.
+"cart_remove_items": list of {"query": string, "quantity": int} or null — items the user wants
+  REMOVED from the cart ("remove the roses", "get rid of the cake", "mata cake eka epa, aran danna").
+"clear_cart": true only when the user wants the WHOLE cart emptied ("clear my cart",
+  "remove everything", "cart eka clear karanna"). Removal/clear = CART_ACTION intent.
 "trigger_checkout": true only if user explicitly wants to buy/checkout/pay now.
 "recipient_name", "delivery_address", "contact_number": extract verbatim if stated, else null.
 "gift_message": verbatim greeting card / gift note text the user wants to include (e.g., from
@@ -146,6 +150,8 @@ OUTPUT SCHEMA (emit every key, no extras)
   "budget_limit": null,
   "tracking_code": null,
   "cart_items": null,
+  "cart_remove_items": null,
+  "clear_cart": false,
   "trigger_checkout": false,
   "recipient_name": null,
   "delivery_address": null,
@@ -199,6 +205,10 @@ User: "Add the first Glitter Hearts Chocolate Box you showed me to the cart"
 // classified EXCLUSIVELY as CART_ACTION. NEVER reclassify these as SEARCH.
 User: "add it to my cart"
 {"intents":["CART_ACTION"],"allergies":{},"preferences":{},"search_recipient":null,"location":null,"deadline":null,"search_query":null,"budget_limit":null,"tracking_code":null,"cart_items":[{"query":"","quantity":1}],"trigger_checkout":false,"recipient_name":null,"delivery_address":null,"contact_number":null,"gift_message":null}
+
+// CART REMOVAL — user wants an item taken OUT of the cart (never SEARCH, never cart_items)
+User: "actually get rid of the chocolate box, I changed my mind"
+{"intents":["CART_ACTION"],"allergies":{},"preferences":{},"search_recipient":null,"location":null,"deadline":null,"search_query":null,"budget_limit":null,"tracking_code":null,"cart_items":null,"cart_remove_items":[{"query":"chocolate box","quantity":1}],"clear_cart":false,"trigger_checkout":false,"recipient_name":null,"delivery_address":null,"contact_number":null,"gift_message":null}
 
 // MULTI-INTENT: add item AND search for something different
 User: "Add the first cake you showed me to the cart, and then find some red roses under 3000"

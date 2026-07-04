@@ -11,6 +11,7 @@ import { Product, kaprukaBuyUrl } from "@/components/ProductCard";
 import { AnimatedAIChat, Message as ChatMessage } from "@/components/ui/animated-ai-chat";
 import { AccessibilityLayer } from "@/components/AccessibilityLayer";
 import { AuthPanel, RukiIdentity } from "@/components/auth/AuthPanel";
+import { FeaturesGuideView, TechArchitectureView } from "@/components/InfoOverlays";
 import { speakText, stopSpeech } from "@/lib/ruki-tts";
 
 const BACKEND_URL =
@@ -74,6 +75,9 @@ export default function RukiPage() {
   const [language, setLanguage] = useState("English");
   const [isAudioActive, setIsAudioActive] = useState(false);
 
+  // ── Informational overlays (Features & Guide / Tech Architecture)
+  const [infoView, setInfoView] = useState<"features" | "architecture" | null>(null);
+
   // ── Accessibility (hands-free) Voice Assistant Mode
   const [accessibilityOpen, setAccessibilityOpen] = useState(false);
   const accessibilityOpenRef = useRef(false);
@@ -119,6 +123,10 @@ export default function RukiPage() {
 
   // ── Vision search upload
   const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Gift-card message composed conversationally by Ruki (payload state,
+  // carried with the cart so it's ready to paste at Kapruka checkout).
+  const giftMessageRef = useRef<string | null>(null);
 
   // ── Authenticated fetch headers — attaches the Clerk session JWT when present
   const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
@@ -511,6 +519,30 @@ export default function RukiPage() {
               }
             }
             else if (ev === "cart_update") {
+              // Conversationally-composed gift-card message rides along with
+              // the cart payload state (pasted at Kapruka checkout).
+              if (typeof p.gift_message === "string" && p.gift_message.trim()) {
+                giftMessageRef.current = p.gift_message.trim();
+              }
+
+              // ── Removal operations (cart state lives here, so WE match) ──
+              if (p.clear_cart) {
+                setCart([]);
+              } else if (Array.isArray(p.remove_queries) && p.remove_queries.length > 0) {
+                const matchesQuery = (itemName: string, q: string) => {
+                  const stop = new Set(["the", "a", "an", "my", "of", "and", "item", "items"]);
+                  const tokens = (s: string) =>
+                    s.toLowerCase().split(/[^a-z0-9]+/).filter(t => t.length > 1 && !stop.has(t));
+                  const qT = tokens(q);
+                  if (qT.length === 0) return false;
+                  const nameT = new Set(tokens(itemName));
+                  return qT.some(t => nameT.has(t) || nameT.has(t.replace(/s$/, "")));
+                };
+                setCart(prev =>
+                  prev.filter(item => !p.remove_queries.some((q: string) => matchesQuery(item.name, q)))
+                );
+              }
+
               const products: Product[] = p.products || [];
               let mergedCart = cart;
               products.forEach((prod) => {
@@ -785,6 +817,8 @@ export default function RukiPage() {
           guestId={guestLabel}
           theme={theme}
           onToggleTheme={toggleTheme}
+          onOpenFeatures={() => setInfoView("features")}
+          onOpenArchitecture={() => setInfoView("architecture")}
           onClearHistory={handleClearHistory}
           onToggleCart={() => setRightOpen(true)}
           cartCount={cart.reduce((s, i) => s + i.quantity, 0)}
@@ -840,6 +874,10 @@ export default function RukiPage() {
         cart={cart}
         total={total}
       />
+
+      {/* Judge-facing informational overlays */}
+      <FeaturesGuideView open={infoView === "features"} onClose={() => setInfoView(null)} />
+      <TechArchitectureView open={infoView === "architecture"} onClose={() => setInfoView(null)} />
 
       {/* Hands-free / low-vision Voice Assistant Mode */}
       <AccessibilityLayer

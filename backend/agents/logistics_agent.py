@@ -9,25 +9,82 @@ from infrastructure.llm.client import chat
 async def run(location: str | None, deadline: str | None = None, tracking_code: str | None = None) -> str:
     from infrastructure.mcp.client import kapruka_list_delivery_cities, kapruka_check_delivery, kapruka_track_order
 
-    # 1. Live Order Tracking Flow
+    # 1. Live Order Tracking Flow — visual status journey
     if tracking_code:
         try:
             tracking_info = await kapruka_track_order(tracking_code)
             if isinstance(tracking_info, dict):
-                status = tracking_info.get("status") or tracking_info.get("result", {}).get("status") or "Unknown"
-                last_loc = tracking_info.get("last_location") or tracking_info.get("result", {}).get("last_location") or "N/A"
-                del_date = tracking_info.get("delivery_date") or tracking_info.get("result", {}).get("delivery_date") or "N/A"
-                
-                return (
-                    f"Order tracking update for #{tracking_code}:\n"
-                    f"Status: {status}\n"
-                    f"Current Location: {last_loc}\n"
-                    f"Est. Delivery Date: {del_date}"
-                )
+                nested = tracking_info.get("result") if isinstance(tracking_info.get("result"), dict) else {}
+
+                def field(*keys: str, default: str = "") -> str:
+                    for k in keys:
+                        v = tracking_info.get(k) or nested.get(k)
+                        if v:
+                            return str(v)
+                    return default
+
+                status = field("status", "state", "current_status", default="In transit")
+                last_loc = field("last_location", "current_location", "location")
+                del_date = field("delivery_date", "estimated_delivery", "eta", "arrival_date")
+                provider = field("provider", "courier", "carrier")
+                note = field("note", "notes", "remark", "message")
+
+                # Map the raw status onto the canonical journey stages.
+                stages = [
+                    "Order placed",
+                    "Packed at fulfilment centre",
+                    "In transit",
+                    "Out for delivery",
+                    "Delivered",
+                ]
+                s = status.lower()
+                if "out for" in s:
+                    current = 3
+                elif "deliver" in s:
+                    current = 4
+                elif any(k in s for k in ("transit", "ship", "dispatch", "customs", "on the way", "hub")):
+                    current = 2
+                elif any(k in s for k in ("pack", "process", "prepar")):
+                    current = 1
+                elif any(k in s for k in ("placed", "confirm", "received", "pending", "created")):
+                    current = 0
+                else:
+                    current = 2  # unknown wording — assume mid-journey
+
+                lines = [f"📦 Tracking #{tracking_code} — status journey", ""]
+                for i, stage in enumerate(stages):
+                    if i < current or (current == 4 and i < 4):
+                        mark = "✅"
+                    elif i == current:
+                        mark = "🔵"
+                    else:
+                        mark = "⚪"
+                    detail = ""
+                    if i == current:
+                        detail = f"  ·  {status}"
+                        if last_loc and i in (2, 3):
+                            detail += f" (near {last_loc})"
+                    lines.append(f"{mark}  {stage}{detail}")
+
+                footer = []
+                if del_date:
+                    footer.append(f"🗓️ Estimated delivery: {del_date}")
+                if provider:
+                    footer.append(f"🚚 Carrier: {provider}")
+                if note:
+                    footer.append(f"📝 {note}")
+                if footer:
+                    lines.append("")
+                    lines.extend(footer)
+
+                return "\n".join(lines)
             else:
                 return f"Tracking details for #{tracking_code}: {str(tracking_info)}"
         except Exception as e:
-            return f"[Tracking] Failed to track order #{tracking_code} via live tools: {e}"
+            return (
+                f"Aiyo — I couldn't reach the live tracker for #{tracking_code} just now. "
+                f"Give it another try in a moment, or check the order number is right? ({e})"
+            )
 
     if not location:
         return (
