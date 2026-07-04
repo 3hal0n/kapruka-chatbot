@@ -21,7 +21,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, X, Volume2 } from "lucide-react";
+import { Mic, MicOff, X, Volume2 } from "lucide-react";
 import { speakText, stopSpeech } from "@/lib/ruki-tts";
 
 interface AccessibilityLayerProps {
@@ -80,6 +80,10 @@ export function AccessibilityLayer({
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [transcript, setTranscript] = useState("");
   const [supported, setSupported] = useState(true);
+  // Microphone blocked (permission denied) or unavailable (insecure HTTP context).
+  const [micBlocked, setMicBlocked] = useState(false);
+  // Cache a successful permission check so we don't re-prompt on every loop turn.
+  const micOkRef = useRef(false);
   // Mic language: the Web Speech recognizer transcribes ONE language at a
   // time — "mata cake ekak oni" through en-US becomes "butter cake peacock
   // hone". The toggle switches the recognizer to si-LK for Sinhala speakers.
@@ -140,7 +144,15 @@ export function AccessibilityLayer({
         setPhase("idle");
       }
     };
-    rec.onerror = () => setPhase("idle");
+    rec.onerror = (event: any) => {
+      // Permission denied at the recognizer level (covers browsers where the
+      // Speech API surfaces the block instead of getUserMedia).
+      if (event?.error === "not-allowed" || event?.error === "service-not-allowed") {
+        micOkRef.current = false;
+        setMicBlocked(true);
+      }
+      setPhase("idle");
+    };
     rec.onend = () => {
       // If recognition ended without producing a result, drop back to idle.
       if (phaseRef.current === "listening") setPhase("idle");
@@ -158,9 +170,32 @@ export function AccessibilityLayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const startListening = useCallback(() => {
+  // Pre-flight microphone check: catches NotAllowedError (user blocked the
+  // mic) and insecure contexts (plain HTTP, where mediaDevices is undefined)
+  // so we can explain the fix instead of silently failing to listen.
+  const ensureMicAccess = useCallback(async (): Promise<boolean> => {
+    if (micOkRef.current) return true;
+    if (typeof window === "undefined") return false;
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      setMicBlocked(true);
+      return false;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop()); // probe only — release at once
+      micOkRef.current = true;
+      return true;
+    } catch {
+      // NotAllowedError (blocked), NotFoundError (no device), SecurityError…
+      setMicBlocked(true);
+      return false;
+    }
+  }, []);
+
+  const startListening = useCallback(async () => {
     const rec = recognitionRef.current;
     if (!rec || isBusy) return;
+    if (!(await ensureMicAccess())) return;
     // Silence any in-flight Ruki audio (backend MP3 or browser synth) so the
     // mic never captures her own voice.
     stopSpeech();
@@ -172,7 +207,7 @@ export function AccessibilityLayer({
     } catch {
       /* recognition already active */
     }
-  }, [isBusy]);
+  }, [isBusy, ensureMicAccess]);
 
   const stopListening = useCallback(() => {
     try {
@@ -244,6 +279,52 @@ export function AccessibilityLayer({
   };
 
   return (
+    <>
+    {/* Microphone permission / secure-context error modal */}
+    <AnimatePresence>
+      {micBlocked && (
+        <motion.div
+          className="fixed inset-0 z-110 flex items-center justify-center p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMicBlocked(false)} />
+          <motion.div
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Microphone access blocked"
+            initial={{ opacity: 0, scale: 0.92, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.92, y: 12 }}
+            transition={{ type: "spring", stiffness: 320, damping: 28 }}
+            className="relative z-10 w-full max-w-sm rounded-2xl border border-border bg-background p-6 text-center shadow-2xl"
+          >
+            <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-red-500/10">
+              <MicOff className="h-7 w-7 text-red-500" aria-hidden="true" />
+            </span>
+            <h2 className="mt-3 text-base font-black tracking-tight text-foreground">
+              Microphone Access Blocked
+            </h2>
+            <p className="mt-2 text-xs font-medium leading-relaxed text-muted-foreground">
+              To use Hands-Free Mode, please click the site settings icon (🔒) in your
+              browser&apos;s URL bar and allow microphone permissions.
+              <br />
+              <span className="mt-1 inline-block font-bold text-foreground/80">
+                Note: Voice features require a secure connection.
+              </span>
+            </p>
+            <button
+              onClick={() => setMicBlocked(false)}
+              className="mt-4 w-full rounded-xl bg-linear-to-r from-primary-vivid to-primary-vivid-soft py-2.5 text-sm font-black text-primary-foreground transition-all hover:brightness-105 active:scale-[0.98] cursor-pointer"
+            >
+              Got it
+            </button>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
     <AnimatePresence>
       {open && (
         // Ambient top banner: new replies + carousels arrive at the BOTTOM of
@@ -341,5 +422,6 @@ export function AccessibilityLayer({
         </div>
       )}
     </AnimatePresence>
+    </>
   );
 }
