@@ -45,7 +45,16 @@ export function KaprukaSmileGlow() {
       <svg
         viewBox={viewBox}
         preserveAspectRatio="xMidYMax meet"
-        className="kapruka-smile-glow absolute bottom-[6%] left-1/2 h-auto w-[clamp(1400px,150vw,1800px)] -translate-x-1/2"
+        // Mobile renders much narrower on purpose: the arc's geometry is fixed
+        // and scales uniformly, so a screen only ever sees the central slice
+        // of whatever width we set. Forcing the same ~1400px+ desktop width on
+        // a ~390px phone showed just the arc's near-flat centre point — not a
+        // curve at all. Narrowing it on small screens reveals proportionally
+        // more of the bend. Mobile screens are also taller relative to width,
+        // which pushes a bottom-anchored element further down in absolute
+        // pixels — bottom-[15%] pulls it back up into view there, while
+        // md:bottom-0 keeps it flush with the edge on desktop as before.
+        className="kapruka-smile-glow absolute bottom-[15%] left-1/2 h-auto w-[190vw] -translate-x-1/2 md:bottom-0 md:w-[clamp(1400px,150vw,1800px)]"
       >
         <defs>
           <linearGradient id="kaprukaSmileStroke" x1="0%" y1="0%" x2="100%" y2="0%">
