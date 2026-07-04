@@ -5,8 +5,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
   ChevronDown,
-  Sun,
-  Moon,
   Wallet,
   User,
   PartyPopper,
@@ -16,7 +14,6 @@ import {
   ArrowRightLeft,
   FileSearch,
   MessageSquareDot,
-  ShoppingBag,
   Sparkles,
 } from "lucide-react";
 import { OccasionCalendar } from "@/components/OccasionCalendar";
@@ -31,7 +28,7 @@ export type Mode =
   | "Order Tracking"
   | "Gift Message";
 
-export const MODES: { label: Mode; icon: React.ComponentType<any> }[] = [
+export const MODES: { label: Mode; icon: React.ComponentType<{ className?: string }> }[] = [
   { label: "Smart Shopping", icon: Compass },
   { label: "Event Planner", icon: Layers },
   { label: "Gift Box Builder", icon: Gift },
@@ -70,8 +67,6 @@ export function LeftSidebar({
   setOccasion,
   open,
   onClose,
-  theme,
-  toggleTheme,
   vibeCheck,
   setVibeCheck,
   onSelectProfile,

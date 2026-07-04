@@ -74,6 +74,7 @@ export function CheckoutModal({
   useEffect(() => {
     if (!open) return;
     if (autoResult) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- resetting the form to a freshly-opened prop (autoResult/prefill), not a render-derived value
       setResult(autoResult);
       setPhase("result");
       return;
@@ -236,7 +237,7 @@ export function CheckoutModal({
                   </button>
 
                   <p className="text-center text-[10px] font-medium leading-relaxed text-muted-foreground">
-                    Your whole cart transfers to Kapruka's secure checkout — prices locked for 60 minutes, no account needed.
+                    Your whole cart transfers to Kapruka&apos;s secure checkout — prices locked for 60 minutes, no account needed.
                   </p>
                 </>
               ) : (
