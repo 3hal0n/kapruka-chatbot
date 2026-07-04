@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Gift } from "lucide-react";
 
@@ -45,6 +46,7 @@ interface FlyingItem {
 }
 
 export default function RukiPage() {
+  const router = useRouter();
   // ── Navigation & Views
   const [mode, setMode] = useState<string>("Smart Shopping");
   const [leftOpen, setLeftOpen] = useState(false);
@@ -817,7 +819,7 @@ export default function RukiPage() {
           guestId={guestLabel}
           theme={theme}
           onToggleTheme={toggleTheme}
-          onOpenFeatures={() => setInfoView("features")}
+          onOpenFeatures={() => router.push("/features")}
           onOpenArchitecture={() => setInfoView("architecture")}
           onClearHistory={handleClearHistory}
           onToggleCart={() => setRightOpen(true)}

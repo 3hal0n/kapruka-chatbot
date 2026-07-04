@@ -884,8 +884,9 @@ export function AnimatedAIChat({
             <div className="bg-linear-to-t from-background via-background/90 to-transparent px-4 pb-4 pt-2 md:px-8">
               <div className="mx-auto max-w-3xl">
                 {inputBar}
-                <div className="mt-2 text-center text-[10px] text-muted-foreground/50">
-                  Press Enter to send · Shift + Enter for a new line
+                <div className="mt-2 space-y-0.5 text-center text-[10px] text-muted-foreground/50">
+                  <div>Press Enter to send · Shift + Enter for a new line</div>
+                  <div>Ruki can make mistakes. Please verify important order details.</div>
                 </div>
               </div>
             </div>
