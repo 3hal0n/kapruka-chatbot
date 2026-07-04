@@ -25,7 +25,7 @@ import {
   Lightbulb,
   Network,
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useAnimation } from "framer-motion";
 import { ProductCard, Product } from "@/components/ProductCard";
 import { KaprukaSmileGlow } from "@/components/ui/kapruka-smile-glow";
 import { RukiLogo } from "@/components/ui/logo";
@@ -88,6 +88,64 @@ const DEFAULT_SUGGESTIONS = [
   "Find a birthday gift under Rs. 3000",
   "Track my last order",
 ];
+
+// Rotating input-placeholder examples — quietly teaches what Ruki can do.
+const PLACEHOLDER_EXAMPLES = [
+  "Find a birthday cake under Rs. 5000…",
+  "I need anniversary flowers delivered to Colombo…",
+  "Compare Samsung phones…",
+  "Suggest a gift hamper for my ammi…",
+  "mata ammata gift ekak oni…",
+  "Track my order #218760…",
+];
+
+/** Typewriter placeholder: types each example, pauses, wipes, moves on.
+ *  Static text when the input has content or the user prefers reduced motion. */
+function useTypingPlaceholder(active: boolean): string {
+  const [text, setText] = React.useState("What's on your mind?");
+
+  React.useEffect(() => {
+    if (!active) return;
+    if (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setText("What's on your mind?");
+      return;
+    }
+
+    let phraseIdx = 0;
+    let charIdx = 0;
+    let deleting = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const tick = () => {
+      const phrase = PLACEHOLDER_EXAMPLES[phraseIdx];
+      if (!deleting) {
+        charIdx += 1;
+        setText(phrase.slice(0, charIdx));
+        if (charIdx >= phrase.length) {
+          deleting = true;
+          timer = setTimeout(tick, 2400); // linger so it can be read
+          return;
+        }
+        timer = setTimeout(tick, 42);
+      } else {
+        charIdx = Math.max(0, charIdx - 2);
+        setText(phrase.slice(0, charIdx) || " ");
+        if (charIdx === 0) {
+          deleting = false;
+          phraseIdx = (phraseIdx + 1) % PLACEHOLDER_EXAMPLES.length;
+          timer = setTimeout(tick, 420);
+          return;
+        }
+        timer = setTimeout(tick, 16);
+      }
+    };
+
+    timer = setTimeout(tick, 900);
+    return () => clearTimeout(timer);
+  }, [active]);
+
+  return active ? text : "What's on your mind?";
+}
 
 // Ruki quick-start suggestions — mirrors the Kapruka gifting shortcuts
 const SUGGESTION_PILLS: { label: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -309,6 +367,47 @@ export function AnimatedAIChat({
   const chatFeedEndRef = React.useRef<HTMLDivElement>(null);
   const suggestionsRef = React.useRef<HTMLDivElement>(null);
 
+  // Typewriter placeholder (pauses whenever the user has typed something).
+  const typedPlaceholder = useTypingPlaceholder(inputValue === "");
+
+  // Cart "pop" celebration — fires the moment the count INCREASES so the user
+  // sees the AI actually did the work.
+  const cartPopControls = useAnimation();
+  const prevCartCountRef = React.useRef(cartCount);
+  React.useEffect(() => {
+    if (cartCount > prevCartCountRef.current) {
+      cartPopControls.start({
+        scale: [1, 1.18, 0.94, 1.06, 1],
+        rotate: [0, -5, 4, -2, 0],
+        transition: { duration: 0.55, ease: "easeOut" },
+      });
+    }
+    prevCartCountRef.current = cartCount;
+  }, [cartCount, cartPopControls]);
+
+  // One-time onboarding tip pointing at the hands-free mic.
+  const [showVoiceTip, setShowVoiceTip] = React.useState(false);
+  React.useEffect(() => {
+    if (!isEmpty || !onOpenVoiceMode) return;
+    if (typeof window === "undefined") return;
+    if (localStorage.getItem("ruki_voice_tip_seen")) return;
+    const showTimer = setTimeout(() => setShowVoiceTip(true), 1400);
+    const hideTimer = setTimeout(() => setShowVoiceTip(false), 12000);
+    return () => {
+      clearTimeout(showTimer);
+      clearTimeout(hideTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const dismissVoiceTip = React.useCallback(() => {
+    setShowVoiceTip(false);
+    try {
+      localStorage.setItem("ruki_voice_tip_seen", "1");
+    } catch {
+      /* storage unavailable */
+    }
+  }, []);
+
   React.useEffect(() => {
     if (!showSuggestions) return;
     const handleClickOutside = (e: MouseEvent) => {
@@ -383,11 +482,52 @@ export function AnimatedAIChat({
         )}
       </AnimatePresence>
 
+      {/* One-time hands-free onboarding tip, anchored above the mic button */}
+      <AnimatePresence>
+        {showVoiceTip && (
+          <motion.div
+            role="status"
+            aria-live="polite"
+            initial={{ opacity: 0, y: 8, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 6, scale: 0.95 }}
+            transition={{ type: "spring", stiffness: 380, damping: 26 }}
+            className="absolute -top-16 right-2 z-30 sm:right-10"
+          >
+            <button
+              onClick={() => {
+                dismissVoiceTip();
+                onOpenVoiceMode?.();
+              }}
+              className="flex items-center gap-2 rounded-2xl bg-linear-to-r from-primary-vivid to-primary-vivid-soft px-3.5 py-2.5 text-left text-[11px] font-bold text-primary-foreground shadow-[0_12px_32px_-10px_var(--primary-glow)] cursor-pointer"
+            >
+              <Mic className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>
+                Try Hands-Free Mode!
+                <span className="block font-medium opacity-90">Click here and ask for a gift.</span>
+              </span>
+            </button>
+            <button
+              onClick={dismissVoiceTip}
+              aria-label="Dismiss tip"
+              className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full border border-border bg-surface text-muted-foreground shadow hover:text-foreground cursor-pointer"
+            >
+              <X className="h-3 w-3" />
+            </button>
+            {/* Pointer arrow aimed at the mic */}
+            <span
+              aria-hidden="true"
+              className="absolute -bottom-1 right-7 h-3 w-3 rotate-45 rounded-[2px] bg-primary-vivid-soft"
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div
         className={`relative flex items-end gap-2 rounded-[28px] border bg-surface/60 px-3 py-2 backdrop-blur-md transition-all duration-300 ${
           isFocused
             ? "border-primary-vivid/50 bg-surface shadow-[0_0_0_4px_var(--primary-glow),0_14px_44px_-14px_var(--primary-glow)]"
-            : "border-border shadow-sm"
+            : "border-border shadow-[0_14px_40px_-18px_rgba(60,27,99,0.28)]"
         }`}
       >
         <button
@@ -409,7 +549,8 @@ export function AnimatedAIChat({
           onKeyDown={handleKeyDown}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
-          placeholder="What's on your mind?"
+          placeholder={typedPlaceholder}
+          aria-label="Message Ruki"
           className="max-h-32 min-h-[24px] flex-1 resize-none self-center overflow-y-auto bg-transparent py-1.5 text-sm leading-relaxed outline-none placeholder:text-muted-foreground/60 select-text"
         />
 
@@ -430,7 +571,10 @@ export function AnimatedAIChat({
           </button>
 
           <button
-            onClick={() => onOpenVoiceMode?.()}
+            onClick={() => {
+              dismissVoiceTip();
+              onOpenVoiceMode?.();
+            }}
             disabled={!onOpenVoiceMode}
             type="button"
             className="flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary-soft hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
@@ -690,7 +834,11 @@ export function AnimatedAIChat({
 
       {/* Full-canvas conversation surface */}
       <div className="relative flex flex-1 flex-col overflow-hidden">
-        {/* Floating mobile sidebar toggle (upper-left) */}
+        {/* Floating mobile sidebar toggle (upper-left).
+            `fixed` (not absolute) + z-50: mobile browsers promote the message
+            scroll container to its own compositing layer, which could paint
+            over an absolutely-positioned sibling once the chat had content —
+            fixed positioning keeps the control above the scroll layer. */}
         <AnimatePresence>
           {!sidebarOpen && (
             <motion.button
@@ -698,7 +846,7 @@ export function AnimatedAIChat({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.8 }}
               onClick={onToggleSidebar}
-              className="glass absolute left-4 top-4 z-40 grid h-10 w-10 place-items-center rounded-full text-muted-foreground transition-colors hover:text-foreground cursor-pointer md:hidden"
+              className="fixed left-4 top-4 z-50 grid h-11 w-11 place-items-center rounded-full border border-border bg-surface/90 text-foreground shadow-lg backdrop-blur-md transition-colors hover:bg-primary-soft cursor-pointer md:hidden"
               title="Open menu"
               aria-label="Open menu"
             >
@@ -707,27 +855,42 @@ export function AnimatedAIChat({
           )}
         </AnimatePresence>
 
-        {/* Persistent cart pill (top-right, always visible) */}
+        {/* Persistent cart pill (top-right, always visible). Pops the moment
+            an item lands in the cart so the AI's work is felt, not assumed. */}
         {onToggleCart && (
-          <button
+          <motion.button
             onClick={onToggleCart}
-            className="glass absolute right-4 top-4 z-40 flex items-center gap-2 rounded-full px-4 py-2.5 text-xs font-bold text-foreground transition-colors hover:text-primary cursor-pointer"
-            aria-label="Open cart"
+            animate={cartPopControls}
+            className="fixed right-4 top-4 z-50 flex items-center gap-2 rounded-full border border-border bg-surface/90 px-4 py-2.5 text-xs font-bold text-foreground shadow-lg backdrop-blur-md transition-colors hover:text-primary cursor-pointer"
+            aria-label={`Open cart${cartCount > 0 ? ` (${cartCount} item${cartCount === 1 ? "" : "s"})` : ""}`}
           >
             <ShoppingCart className="h-4 w-4" />
             <span className="hidden sm:inline">Cart</span>
             {cartCount > 0 && (
-              <span className="grid h-5 min-w-5 place-items-center rounded-full bg-amber px-1 text-[10px] font-black text-amber-foreground">
+              <motion.span
+                key={cartCount}
+                initial={{ scale: 1.7 }}
+                animate={{ scale: 1 }}
+                transition={{ type: "spring", stiffness: 480, damping: 16 }}
+                className="grid h-5 min-w-5 place-items-center rounded-full bg-amber px-1 text-[10px] font-black text-amber-foreground shadow-[0_0_10px_rgba(255,215,0,0.45)]"
+              >
                 {cartCount}
-              </span>
+              </motion.span>
             )}
-          </button>
+          </motion.button>
         )}
 
         {isEmpty ? (
           /* ── Empty-state: eyebrow + greeting + input + suggestion pills ── */
           <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden px-4">
             <KaprukaSmileGlow />
+
+            {/* Ambient hero orbs — slow-drifting brand-colour glows (CSS-only,
+                pointer-transparent, disabled under prefers-reduced-motion). */}
+            <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+              <span className="orb-float absolute -left-24 top-[12%] h-72 w-72 rounded-full bg-primary-vivid/12 blur-3xl" />
+              <span className="orb-float-delayed absolute -right-20 bottom-[18%] h-80 w-80 rounded-full bg-amber/10 blur-3xl" />
+            </div>
 
             <motion.div
               initial="hidden"
@@ -774,9 +937,9 @@ export function AnimatedAIChat({
                     whileHover={{ scale: 1.04 }}
                     whileTap={{ scale: 0.96 }}
                     onClick={() => onSendMessage?.(label)}
-                    className="flex items-center gap-1.5 rounded-full border border-border bg-surface/60 px-4 py-2 text-xs font-semibold text-muted-foreground backdrop-blur-sm transition-colors hover:border-primary/40 hover:text-foreground cursor-pointer"
+                    className="group flex items-center gap-1.5 rounded-full border border-border bg-surface/60 px-4 py-2 text-xs font-semibold text-muted-foreground shadow-sm backdrop-blur-sm transition-all duration-300 hover:border-primary-vivid/50 hover:bg-primary-soft hover:text-foreground hover:shadow-[0_8px_24px_-10px_var(--primary-glow)] cursor-pointer"
                   >
-                    <Icon className="h-3.5 w-3.5" />
+                    <Icon className="h-3.5 w-3.5 text-primary-vivid transition-transform duration-300 group-hover:scale-110" />
                     {label}
                   </motion.button>
                 ))}

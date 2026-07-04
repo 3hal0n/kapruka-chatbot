@@ -48,35 +48,40 @@
 }
 
 .dark {
-  /* ── Solid Deep Matte Carbon Black (#0A0A0B) Dark Mode ── */
-  --background: #0A0A0B;
+  /* ── Premium Stealth Dark Mode ──
+     Deep, rich near-black canvas with a violet undertone; Kapruka purple acts
+     as a glowing neon accent on borders, active states, and primary buttons —
+     moody-cyberpunk, not flat grey. */
+  --background: #050508;
   --foreground: #F4F1F8;
-  --surface: #121214;
-  --surface-glass: rgba(18, 18, 20, 0.8);
-  --border: rgba(255, 255, 255, 0.08);
+  --surface: #0C0C13;
+  --surface-glass: rgba(13, 11, 22, 0.72);
+  /* Neon purple hairlines instead of grey dividers */
+  --border: rgba(139, 92, 246, 0.18);
 
-  --primary: #7C3AED;
+  --primary: #8B5CF6;
   --primary-foreground: #ffffff;
-  --primary-soft: #1E1B4B;
-  --primary-glow: rgba(124, 58, 173, 0.35); /* Ambient purple glow */
-  --primary-vivid: #7C3AED;
-  --primary-vivid-soft: #9061F0;
+  --primary-soft: #17102B;
+  --primary-glow: rgba(139, 92, 246, 0.45); /* Neon ambient glow */
+  --primary-vivid: #8B5CF6;
+  --primary-vivid-soft: #A78BFA;
 
   --amber: #FFD700;
-  --amber-foreground: #0A0A0B;
+  --amber-foreground: #050508;
 
-  --muted: rgba(255, 255, 255, 0.05);
+  --muted: rgba(139, 92, 246, 0.08);
   --muted-foreground: #C8B3E4;
 
   --ring: #FFD700;
 
   --ambient:
-    radial-gradient(60% 50% at 50% -10%, rgba(124, 58, 173, 0.25), transparent 70%),
-    radial-gradient(50% 42% at 102% 104%, rgba(60, 27, 99, 0.3), transparent 72%),
-    radial-gradient(40% 38% at 92% 6%, rgba(255, 215, 0, 0.05), transparent 70%);
+    radial-gradient(58% 46% at 50% -12%, rgba(139, 92, 246, 0.22), transparent 70%),
+    radial-gradient(46% 40% at -6% 108%, rgba(76, 29, 149, 0.28), transparent 72%),
+    radial-gradient(52% 44% at 104% 102%, rgba(60, 27, 99, 0.30), transparent 72%),
+    radial-gradient(36% 34% at 94% 4%, rgba(255, 215, 0, 0.06), transparent 70%);
 
-  --scroll-thumb: rgba(255, 255, 255, 0.15);
-  --scroll-thumb-hover: rgba(255, 255, 255, 0.3);
+  --scroll-thumb: rgba(139, 92, 246, 0.28);
+  --scroll-thumb-hover: rgba(139, 92, 246, 0.5);
 }
 
 @theme inline {
@@ -169,6 +174,22 @@ body {
   to { background-position: 200% center; }
 }
 
+/* ── Ambient hero orbs — slow drifting brand glows behind the empty state ── */
+@keyframes orb-drift {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  33%  { transform: translate3d(40px, -28px, 0) scale(1.08); }
+  66%  { transform: translate3d(-24px, 22px, 0) scale(0.96); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+
+.orb-float {
+  animation: orb-drift 16s ease-in-out infinite;
+}
+
+.orb-float-delayed {
+  animation: orb-drift 20s ease-in-out infinite reverse;
+}
+
 /* ── Custom scrollbars ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -188,6 +209,7 @@ body {
 /* Respect reduced-motion users — disables the looping flourishes */
 @media (prefers-reduced-motion: reduce) {
   .text-aurora { animation: none; }
+  .orb-float, .orb-float-delayed { animation: none; }
   * { scroll-behavior: auto !important; }
 }
 
