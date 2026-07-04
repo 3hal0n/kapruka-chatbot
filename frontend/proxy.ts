@@ -6,11 +6,11 @@
  * proxy is a pass-through and the app keeps its existing guest-only behaviour.
  */
 import { clerkMiddleware } from "@clerk/nextjs/server";
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
 const clerkEnabled = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
-const passthrough = (_request: NextRequest) => NextResponse.next();
+const passthrough = () => NextResponse.next();
 
 // All routes stay public — Clerk only hydrates the session so the chat can
 // attach a bearer token; sign-in is never forced on shoppers.

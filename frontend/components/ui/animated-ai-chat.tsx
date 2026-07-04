@@ -17,7 +17,6 @@ import {
   Gift,
   Flower,
   Percent,
-  Truck,
   Sparkles,
   PanelLeftClose,
   PanelLeftOpen,
@@ -107,6 +106,7 @@ function useTypingPlaceholder(active: boolean): string {
   React.useEffect(() => {
     if (!active) return;
     if (typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- resets a possibly-stale mid-typing phrase when the user's motion preference is detected, not a render-derived value
       setText("What's on your mind?");
       return;
     }

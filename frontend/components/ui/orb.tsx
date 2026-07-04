@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, FC } from "react";
 import { Mesh, Program, Renderer, Triangle, Vec3 } from "ogl";
 
-const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
+const cn = (...classes: Array<string | boolean | null | undefined>) => classes.filter(Boolean).join(" ");
 
 interface OrbProps {
   hue?: number;
@@ -205,8 +205,8 @@ export const Orb: FC<OrbProps> = ({
     const canvas = gl.canvas as HTMLCanvasElement;
     container.appendChild(canvas);
 
-    const geometry = new Triangle(gl as any);
-    const program = new Program(gl as any, {
+    const geometry = new Triangle(gl);
+    const program = new Program(gl, {
       vertex: vert,
       fragment: frag,
       uniforms: {
@@ -222,7 +222,7 @@ export const Orb: FC<OrbProps> = ({
       }
     });
 
-    const mesh = new Mesh(gl as any, { geometry, program });
+    const mesh = new Mesh(gl, { geometry, program });
 
     function resize() {
       if (!container) return;

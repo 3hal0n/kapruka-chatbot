@@ -54,7 +54,7 @@ export function Hero({ theme, chatHistory = [], onSelectHistory, onStartNewChat 
               variants={item}
               className="text-lg font-extrabold uppercase tracking-widest text-primary/80"
             >
-              Hey I'm Ruki
+              Hey I&apos;m Ruki
             </motion.h2>
             
             <motion.h1

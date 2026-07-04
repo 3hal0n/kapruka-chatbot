@@ -3,6 +3,23 @@
 import React, { useRef, useState, useEffect } from "react";
 import { Mic, MicOff, Camera, Volume2, VolumeX, Send } from "lucide-react";
 
+// Minimal shape of the Web Speech API surface this component uses — the DOM
+// lib doesn't ship types for it, and the alternative is `any`.
+interface SpeechRecognitionResultEvent {
+  results: { [index: number]: { [index: number]: { transcript: string } }; length: number };
+}
+interface SpeechRecognitionLike {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+}
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+
 interface ChatInputCapsuleProps {
   messageInput: string;
   setMessageInput: (val: string | ((prev: string) => string)) => void;
@@ -20,27 +37,29 @@ export function ChatInputCapsule({
   setMessageInput,
   isMicActive,
   setIsMicActive,
-  isCameraActive,
-  setIsCameraActive,
   isAudioActive,
   setIsAudioActive,
   onSend,
 }: ChatInputCapsuleProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const [attachments, setAttachments] = useState<{ name: string; url: string; type: string }[]>([]);
 
   // 1. Voice Input (Speech Recognition STT)
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const w = window as unknown as {
+        SpeechRecognition?: SpeechRecognitionCtor;
+        webkitSpeechRecognition?: SpeechRecognitionCtor;
+      };
+      const SpeechRecognition = w.SpeechRecognition || w.webkitSpeechRecognition;
       if (SpeechRecognition) {
         const rec = new SpeechRecognition();
         rec.continuous = true;
         rec.interimResults = false;
         rec.lang = "en-US";
 
-        rec.onresult = (event: any) => {
+        rec.onresult = (event: SpeechRecognitionResultEvent) => {
           const text = event.results[event.results.length - 1][0].transcript;
           if (text) {
             setMessageInput(prev => (prev ? prev + " " : "") + text.trim());

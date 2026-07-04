@@ -37,10 +37,34 @@ interface AccessibilityLayerProps {
 
 type VoicePhase = "idle" | "listening" | "thinking" | "speaking";
 
-function getSpeechRecognition(): any | null {
+// Minimal shape of the Web Speech API surface this component actually uses —
+// the DOM lib doesn't ship types for it, and the alternative is `any`.
+interface SpeechRecognitionResultEvent {
+  results: { [index: number]: { [index: number]: { transcript: string } } };
+}
+interface SpeechRecognitionErrorEvent {
+  error?: string;
+}
+interface SpeechRecognitionLike {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  abort?: () => void;
+  onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
+  onend: (() => void) | null;
+}
+type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+
+function getSpeechRecognition(): SpeechRecognitionLike | null {
   if (typeof window === "undefined") return null;
-  const Ctor =
-    (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  const w = window as unknown as {
+    SpeechRecognition?: SpeechRecognitionCtor;
+    webkitSpeechRecognition?: SpeechRecognitionCtor;
+  };
+  const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition;
   return Ctor ? new Ctor() : null;
 }
 
@@ -89,7 +113,7 @@ export function AccessibilityLayer({
   // hone". The toggle switches the recognizer to si-LK for Sinhala speakers.
   const [voiceLang, setVoiceLang] = useState<"en-US" | "si-LK">("en-US");
 
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const phaseRef = useRef<VoicePhase>("idle");
   const openRef = useRef(open);
   const spokenRef = useRef<string>("");
@@ -100,14 +124,21 @@ export function AccessibilityLayer({
   // initial array — submitting through it wiped the whole conversation).
   const onSubmitRef = useRef(onSubmit);
 
-  phaseRef.current = phase;
-  openRef.current = open;
-  voiceLangRef.current = voiceLang;
-  onSubmitRef.current = onSubmit;
+  // Mirror the latest props/state into refs for the recognition callbacks
+  // (which close over refs, not props, since the engine is created once on
+  // mount). Runs after every commit rather than during render.
+  useEffect(() => {
+    phaseRef.current = phase;
+    openRef.current = open;
+    voiceLangRef.current = voiceLang;
+    onSubmitRef.current = onSubmit;
+  });
 
-  // Restore the user's preferred mic language.
+  // Restore the user's preferred mic language — a one-time hydration from
+  // localStorage, which doesn't exist during SSR, so it must run client-side.
   useEffect(() => {
     const stored = typeof window !== "undefined" && localStorage.getItem("ruki_voice_lang");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time localStorage hydration on mount, not a render-derived value
     if (stored === "si-LK" || stored === "en-US") setVoiceLang(stored);
   }, []);
 
@@ -124,6 +155,7 @@ export function AccessibilityLayer({
   useEffect(() => {
     const rec = getSpeechRecognition();
     if (!rec) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time browser feature detection on mount
       setSupported(false);
       return;
     }
@@ -131,7 +163,7 @@ export function AccessibilityLayer({
     rec.interimResults = false;
     rec.lang = voiceLangRef.current; // re-read per start in startListening
 
-    rec.onresult = (event: any) => {
+    rec.onresult = (event: SpeechRecognitionResultEvent) => {
       const currentResult = event.results[0][0].transcript?.trim();
       if (currentResult) {
         setTranscript(currentResult);
@@ -144,7 +176,7 @@ export function AccessibilityLayer({
         setPhase("idle");
       }
     };
-    rec.onerror = (event: any) => {
+    rec.onerror = (event: SpeechRecognitionErrorEvent) => {
       // Permission denied at the recognizer level (covers browsers where the
       // Speech API surfaces the block instead of getUserMedia).
       if (event?.error === "not-allowed" || event?.error === "service-not-allowed") {
@@ -167,7 +199,6 @@ export function AccessibilityLayer({
       }
       recognitionRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Pre-flight microphone check: catches NotAllowedError (user blocked the
@@ -255,6 +286,7 @@ export function AccessibilityLayer({
   // Reflect backend progress and stop everything when the panel closes.
   useEffect(() => {
     if (!open) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- synchronizing the recognition/speech engines (external systems) to the `open` prop closing
       stopListening();
       stopSpeech();
       setPhase("idle");

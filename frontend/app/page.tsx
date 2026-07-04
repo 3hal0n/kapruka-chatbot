@@ -48,7 +48,9 @@ interface FlyingItem {
 export default function RukiPage() {
   const router = useRouter();
   // ── Navigation & Views
-  const [mode, setMode] = useState<string>("Smart Shopping");
+  // Gift Box Builder mode is entered/exited elsewhere; nothing currently
+  // calls a setter here, so this is intentionally read-only.
+  const [mode] = useState<string>("Smart Shopping");
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
 
@@ -56,7 +58,8 @@ export default function RukiPage() {
   const [budget, setBudget] = useState("");
   const [recipient, setRecipient] = useState("");
   const [occasion, setOccasion] = useState("");
-  const [vibeCheck, setVibeCheck] = useState("");
+  // No UI currently sets this; kept read-only until a vibe-check input returns.
+  const [vibeCheck] = useState("");
 
   // ── Group Gift
   const [isGroupGiftModalOpen, setIsGroupGiftModalOpen] = useState(false);
@@ -74,8 +77,9 @@ export default function RukiPage() {
   const giftBoxCanvasRef = useRef<HTMLDivElement>(null);
 
   // ── Input & Voice toggles
-  const [language, setLanguage] = useState("English");
-  const [isAudioActive, setIsAudioActive] = useState(false);
+  // Regular-chat auto-read-aloud has no toggle UI anymore (hands-free voice
+  // mode has its own always-on speech loop), so this stays permanently off.
+  const [isAudioActive] = useState(false);
 
   // ── Informational overlays (Features & Guide / Tech Architecture)
   const [infoView, setInfoView] = useState<"features" | "architecture" | null>(null);
@@ -94,11 +98,20 @@ export default function RukiPage() {
   }, [theme]);
   const toggleTheme = () => setTheme(p => p === "light" ? "dark" : "light");
 
-  // ── Session ID — guest id survives sign-out so anonymous chats resume cleanly
-  const userIdRef = useRef<string>("");
-  const guestIdRef = useRef<string>("");
-  if (!guestIdRef.current) guestIdRef.current = generateUserId();
-  if (!userIdRef.current) userIdRef.current = guestIdRef.current;
+  // ── Session ID — guest id survives sign-out so anonymous chats resume cleanly.
+  // Computed once via useState's lazy initializer (not a ref write during
+  // render) so it's stable across renders and identical on client/server.
+  const [guestId] = useState<string>(() => generateUserId());
+  const userIdRef = useRef<string>(guestId);
+  const guestIdRef = useRef<string>(guestId);
+  // Mirrors userIdRef for anything that needs to re-render when the active
+  // session changes (e.g. the sidebar's active-chat highlight) — reading a
+  // ref's `.current` directly during render isn't safe/reactive.
+  const [activeUserId, setActiveUserId] = useState<string>(guestId);
+  const setActiveUser = useCallback((id: string) => {
+    userIdRef.current = id;
+    setActiveUserId(id);
+  }, []);
 
   // ── Clerk identity — resolved by <AuthPanel/>; guest fallback when disabled
   const identityRef = useRef<RukiIdentity | null>(null);
@@ -113,7 +126,6 @@ export default function RukiPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [currentStatus, setCurrentStatus] = useState<string | null>(null);
-  const [currentIntents, setCurrentIntents] = useState<string[]>([]);
   const [streamedText, setStreamedText] = useState("");
 
   // ── Chat History Log
@@ -143,7 +155,7 @@ export default function RukiPage() {
     identityRef.current = identity;
     if (identity.userId) {
       setIsSignedIn(true);
-      userIdRef.current = identity.userId;
+      setActiveUser(identity.userId);
       setGuestLabel(identity.label || "Member");
       const stored = localStorage.getItem(`ruki_chat_messages_${identity.userId}`);
       setMessages(stored ? JSON.parse(stored) : []);
@@ -161,12 +173,12 @@ export default function RukiPage() {
       });
     } else {
       setIsSignedIn(false);
-      userIdRef.current = guestIdRef.current;
+      setActiveUser(guestIdRef.current);
       syncGuestLabel();
       const stored = localStorage.getItem(`ruki_chat_messages_${guestIdRef.current}`);
       setMessages(stored ? JSON.parse(stored) : []);
     }
-  }, []);
+  }, [setActiveUser]);
 
   // ── Persist the cart server-side for signed-in users (debounced)
   useEffect(() => {
@@ -191,6 +203,7 @@ export default function RukiPage() {
       syncGuestLabel();
       const storedHistory = localStorage.getItem("ruki_chat_history");
       if (storedHistory) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time localStorage hydration on mount; SSR has no localStorage
         setChatHistory(JSON.parse(storedHistory));
       }
 
@@ -222,9 +235,9 @@ export default function RukiPage() {
   // synchronously (React state updates are async/batched, so reading `cart`
   // right after calling setCart would see the stale pre-update value).
   const mergeProductIntoCart = (list: CartItem[], product: Product, quantity?: number): CartItem[] => {
-    const price = typeof product.price === "object" ? (product.price as any).amount : Number(product.price);
-    const id = product.id || (product as any).code || "";
-    const qtyToAdd = quantity !== undefined ? quantity : (product as any).quantity || 1;
+    const price = typeof product.price === "object" ? product.price.amount : Number(product.price);
+    const id = product.id || product.code || "";
+    const qtyToAdd = quantity !== undefined ? quantity : product.quantity || 1;
     const description = product.specs || product.category || product.summary || "";
     const hit = list.find(i => i.id === id);
     if (hit) return list.map(i => i.id === id ? { ...i, quantity: i.quantity + qtyToAdd } : i);
@@ -307,7 +320,7 @@ export default function RukiPage() {
     const newMsg: Message = { id: `clear-${Date.now()}`, sender: "ai", text: "History cleared. How can I help you find gifts today?" };
     setMessages([newMsg]);
     localStorage.setItem(`ruki_chat_messages_${userIdRef.current}`, JSON.stringify([newMsg]));
-    setBudget(""); setRecipient(""); setOccasion(""); setCurrentIntents([]); setCurrentStatus(null);
+    setBudget(""); setRecipient(""); setOccasion(""); setCurrentStatus(null);
   };
 
   // ── Gift Box Builder
@@ -335,7 +348,7 @@ export default function RukiPage() {
       setFlyingItems(prev => prev.filter(f => f.id !== flyId));
       setGiftBoxItems(prev => {
         if (prev.reduce((s, i) => s + i.quantity, 0) >= 5) return prev;
-        const price = typeof product.price === "object" ? (product.price as any).amount : Number(product.price);
+        const price = typeof product.price === "object" ? product.price.amount : Number(product.price);
         const hit = prev.find(i => i.id === product.id);
         if (hit) return prev.map(i => i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i);
         return [...prev, { id: product.id, name: product.name, price, image_url: product.image_url || product.image || "", quantity: 1 }];
@@ -447,7 +460,7 @@ export default function RukiPage() {
       stopSpeech();
     }
 
-    const ctx: Record<string, any> = {};
+    const ctx: Record<string, { budget?: string; occasion?: string; location: string }> = {};
     ctx[recipient.toLowerCase() || "default"] = { budget: budget || undefined, occasion: occasion || undefined, location: "Colombo" };
 
     // Abort the request if the backend stalls (e.g. LLM upstream hangs) so the
@@ -504,7 +517,6 @@ export default function RukiPage() {
             const p = JSON.parse(dv);
             if (ev === "intent_badge") {
               sseIntents = p.intents || [];
-              setCurrentIntents(sseIntents);
               isCartActionTurn = sseIntents.includes("CART_ACTION") && !sseIntents.includes("SEARCH");
             }
             else if (ev === "status") {
@@ -625,11 +637,11 @@ export default function RukiPage() {
     } finally {
       clearTimeout(stallTimer);
     }
-    setStreamedText(""); setCurrentStatus(null); setCurrentIntents([]); setIsTyping(false);
+    setStreamedText(""); setCurrentStatus(null); setIsTyping(false);
   };
 
   const handleSelectHistoryItem = (id: string) => {
-    userIdRef.current = id;
+    setActiveUser(id);
     syncGuestLabel();
     const stored = localStorage.getItem(`ruki_chat_messages_${id}`);
     if (stored) {
@@ -641,12 +653,11 @@ export default function RukiPage() {
   };
 
   const handleStartNewChat = () => {
-    userIdRef.current = generateUserId();
+    setActiveUser(generateUserId());
     syncGuestLabel();
     setMessages([]);
     setIsTyping(false);
     setCurrentStatus(null);
-    setCurrentIntents([]);
     setStreamedText("");
     localStorage.removeItem(`ruki_chat_messages_${userIdRef.current}`);
   };
@@ -814,7 +825,7 @@ export default function RukiPage() {
           chatHistory={chatHistory}
           onSelectHistoryItem={handleSelectHistoryItem}
           onDeleteHistoryItem={handleDeleteHistoryItem}
-          activeChatId={userIdRef.current}
+          activeChatId={activeUserId}
           onStartNewChat={handleStartNewChat}
           guestId={guestLabel}
           theme={theme}

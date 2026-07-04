@@ -23,6 +23,7 @@ export interface Product {
   match?: number; // lovable compatibility
   url?: string; // real Kapruka product-page URL (from MCP search)
   product_url?: string;
+  quantity?: number; // present on cart-matched products from the backend
 }
 
 interface ProductCardProps {

@@ -49,8 +49,11 @@ export function RukiMascot({ state = "idle" }: RukiMascotProps) {
   const bubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const controls = useAnimation();
 
-  // Keep the latest state available to the async "ready" handler.
-  stateRef.current = state;
+  // Keep the latest state available to the async "ready" handler. Runs after
+  // every commit rather than during render.
+  useEffect(() => {
+    stateRef.current = state;
+  });
 
   // Re-tune playback energy whenever the conversational state changes.
   useEffect(() => {
