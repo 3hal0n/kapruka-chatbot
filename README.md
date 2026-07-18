@@ -83,9 +83,11 @@ This launches the FastAPI application on **`http://localhost:8000`** with auto-r
    npm install
    ```
 3. Configure Backend Endpoint (Optional):
-   By default, the frontend connects to the backend running at `http://localhost:8000`. If your backend runs on a different URL/port, create a `.env.local` file inside the `frontend` directory:
+   The client only calls same-origin `/api/...` paths; Next.js rewrites them
+   server-side to `BACKEND_ORIGIN` (default `http://localhost:8080`). If your
+   backend runs elsewhere, create a `.env.local` file inside the `frontend` directory:
    ```env
-   NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+   BACKEND_ORIGIN=http://localhost:8080
    ```
 4. Start the Next.js development server:
    ```bash

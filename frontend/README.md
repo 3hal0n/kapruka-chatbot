@@ -21,9 +21,11 @@ npm install
 ```
 
 ### 2. Configure Environment Variables
-By default, the client points to the backend server at `http://localhost:8000`. You can configure this by creating a `.env.local` file:
+The client only ever calls same-origin `/api/...` paths — Next.js rewrites them
+server-side to the backend. By default that's `http://localhost:8080`; override
+it via `.env.local`:
 ```env
-NEXT_PUBLIC_BACKEND_URL=http://localhost:8000
+BACKEND_ORIGIN=http://localhost:8080
 ```
 
 ### 3. Run Development Server

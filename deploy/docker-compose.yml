@@ -9,7 +9,9 @@
 #      b. AI Studio key (legacy): export GEMINI_API_KEY in the shell or deploy/.env.
 #   2. Clerk auth (optional — app runs guest-only without it): set
 #      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, CLERK_SECRET_KEY and CLERK_ISSUER in deploy/.env.
-#   3. Public API URL is set to the live VM IP (35.200.247.15) — update here if it changes.
+#   3. BACKEND_ORIGIN is the frontend's server-side rewrite target for /api/*.
+#      Within this compose network it's the "backend" service name — the
+#      client never sees it (no more NEXT_PUBLIC_API_URL baked into the bundle).
 
 services:
   db:
@@ -57,14 +59,15 @@ services:
   frontend:
     build:
       context: ../frontend
-      # NEXT_PUBLIC_* must be baked at build time, so pass them as build args too.
+      # Only NEXT_PUBLIC_* values need to be baked at build time.
       args:
-        NEXT_PUBLIC_API_URL: http://35.200.247.15:8080
         NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
     container_name: ruki_frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_URL: http://35.200.247.15:8080
+      # Server-side only — proxies /api/* rewrites to the backend container
+      # over the compose network, never exposed to the client bundle.
+      BACKEND_ORIGIN: http://backend:8080
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
       # Server-side Clerk key used by proxy.ts (session hydration).
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}

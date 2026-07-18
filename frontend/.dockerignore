@@ -3,7 +3,7 @@ node_modules/
 .next/
 out/
 
-# Secrets (NEXT_PUBLIC_API_URL is passed as a build arg instead)
+# Secrets (BACKEND_ORIGIN and Clerk keys are passed via docker-compose environment/args instead)
 .env
 .env.*
 

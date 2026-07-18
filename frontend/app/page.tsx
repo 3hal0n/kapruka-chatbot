@@ -15,11 +15,6 @@ import { AuthPanel, RukiIdentity } from "@/components/auth/AuthPanel";
 import { FeaturesGuideView, TechArchitectureView } from "@/components/InfoOverlays";
 import { speakText, stopSpeech } from "@/lib/ruki-tts";
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_BACKEND_URL ||
-  "http://localhost:8000";
-
 // Clerk is optional: without a publishable key the app runs in guest-only mode
 // exactly as before (no provider, no hooks, no auth headers).
 const CLERK_ENABLED = !!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
@@ -162,7 +157,7 @@ export default function RukiPage() {
       // Hydrate the server-persisted cart (cross-device continuity).
       identity.getToken().then(token => {
         if (!token) return;
-        fetch(`${BACKEND_URL}/api/me/cart`, { headers: { Authorization: `Bearer ${token}` } })
+        fetch(`/api/me/cart`, { headers: { Authorization: `Bearer ${token}` } })
           .then(r => (r.ok ? r.json() : null))
           .then(d => {
             if (d?.items?.length) {
@@ -186,7 +181,7 @@ export default function RukiPage() {
     const t = setTimeout(async () => {
       const headers = await authHeaders();
       if (!headers.Authorization) return;
-      fetch(`${BACKEND_URL}/api/me/cart`, {
+      fetch(`/api/me/cart`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...headers },
         body: JSON.stringify({
@@ -249,7 +244,7 @@ export default function RukiPage() {
       const wasEmpty = prev.length === 0;
       const next = mergeProductIntoCart(prev, product, quantity);
       if (wasEmpty && next.length > 0) {
-        fetch(`${BACKEND_URL}/api/delivery?city=Colombo`)
+        fetch(`/api/delivery?city=Colombo`)
           .then(r => r.json()).then(d => { if (d.fee) setDeliveryFee(d.fee); }).catch(() => {});
       }
       return next;
@@ -284,7 +279,7 @@ export default function RukiPage() {
   const submitOrder = async (details: CheckoutDetails, cartOverride?: CartItem[]): Promise<CheckoutResult> => {
     const orderCart = cartOverride ?? cart;
     const headers = await authHeaders();
-    const res = await fetch(`${BACKEND_URL}/api/order`, {
+    const res = await fetch(`/api/order`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify({
@@ -314,7 +309,7 @@ export default function RukiPage() {
   const handleClearHistory = async () => {
     try {
       const headers = await authHeaders();
-      await fetch(`${BACKEND_URL}/api/reset`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ user_id: userIdRef.current }) });
+      await fetch(`/api/reset`, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify({ user_id: userIdRef.current }) });
     } catch { /* offline */ }
 
     const newMsg: Message = { id: `clear-${Date.now()}`, sender: "ai", text: "History cleared. How can I help you find gifts today?" };
@@ -360,7 +355,7 @@ export default function RukiPage() {
     if (cart.length === 0) return;
     try {
       const headers = await authHeaders();
-      const res = await fetch(`${BACKEND_URL}/api/group-gift/create`, {
+      const res = await fetch(`/api/group-gift/create`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers },
         body: JSON.stringify({
@@ -399,7 +394,7 @@ export default function RukiPage() {
       const headers = await authHeaders();
       const form = new FormData();
       form.append("image", file);
-      const res = await fetch(`${BACKEND_URL}/api/vision/search`, {
+      const res = await fetch(`/api/vision/search`, {
         method: "POST",
         headers, // no Content-Type — the browser sets the multipart boundary
         body: form,
@@ -477,7 +472,7 @@ export default function RukiPage() {
 
     try {
       const headers = await authHeaders();
-      const resp = await fetch(`${BACKEND_URL}/api/chat`, {
+      const resp = await fetch(`/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers },
         signal: controller.signal,
@@ -566,7 +561,7 @@ export default function RukiPage() {
                 const wasEmpty = cart.length === 0;
                 setCart(mergedCart);
                 if (wasEmpty) {
-                  fetch(`${BACKEND_URL}/api/delivery?city=Colombo`)
+                  fetch(`/api/delivery?city=Colombo`)
                     .then(r => r.json()).then(d => { if (d.fee) setDeliveryFee(d.fee); }).catch(() => {});
                 }
                 if (window.innerWidth < 768) setRightOpen(true);
