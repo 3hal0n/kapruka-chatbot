@@ -11,11 +11,6 @@ RUN npm install
 # Copy source (see .dockerignore for excluded node_modules/.next/caches).
 COPY . .
 
-# NEXT_PUBLIC_* values are inlined at build time, so set the API URL here.
-# Overridable from docker-compose via build args.
-ARG NEXT_PUBLIC_API_URL=http://35.200.247.15:8080
-ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-
 # Clerk publishable key (optional — empty keeps the app in guest-only mode).
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
 ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}

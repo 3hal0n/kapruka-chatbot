@@ -17,11 +17,6 @@
  * the hands-free mic loop re-arms off `onEnd`.
  */
 
-const BACKEND_URL =
-  process.env.NEXT_PUBLIC_API_URL ||
-  process.env.NEXT_PUBLIC_BACKEND_URL ||
-  "http://localhost:8000";
-
 export interface SpeakCallbacks {
   onStart?: () => void;
   /** Fires exactly once: on natural end, on error, or on cancellation. */
@@ -142,7 +137,7 @@ function splitForLatency(text: string): string[] {
 }
 
 async function fetchTTSUrl(text: string): Promise<string> {
-  const res = await fetch(`${BACKEND_URL}/api/tts`, {
+  const res = await fetch(`/api/tts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ text }),
