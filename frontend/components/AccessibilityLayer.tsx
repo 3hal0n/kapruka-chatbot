@@ -33,6 +33,15 @@ interface AccessibilityLayerProps {
   isBusy: boolean;
   /** Latest assistant reply; spoken aloud whenever it changes while open. */
   lastResponse: string;
+  /**
+   * Set when the cart or left sidebar drawer is open. Those drawers only
+   * cover part of the screen (see RightCart/LeftSidebar's w-[340px]
+   * max-w-[88vw]), leaving a dimmed backdrop sliver on the other side. A
+   * panel centered on the full viewport would straddle both, half sitting on
+   * the dim backdrop — so instead it docks to the same side/width as the
+   * open drawer.
+   */
+  obscuredSide?: "left" | "right" | null;
 }
 
 type VoicePhase = "idle" | "listening" | "thinking" | "speaking";
@@ -100,6 +109,7 @@ export function AccessibilityLayer({
   onSubmit,
   isBusy,
   lastResponse,
+  obscuredSide = null,
 }: AccessibilityLayerProps) {
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [transcript, setTranscript] = useState("");
@@ -362,7 +372,11 @@ export function AccessibilityLayer({
         // Ambient top banner: new replies + carousels arrive at the BOTTOM of
         // the chat, so docking up here never covers what Ruki is reading out.
         // (top-20 on mobile clears the floating menu/cart pills; top-4 on md+.)
-        <div className="pointer-events-none fixed inset-x-0 top-20 z-60 flex justify-center px-4 md:top-4">
+        <div
+          className={`pointer-events-none fixed inset-x-0 top-20 z-60 flex px-4 md:top-4 ${
+            obscuredSide === "right" ? "justify-end" : obscuredSide === "left" ? "justify-start" : "justify-center"
+          }`}
+        >
           <motion.section
             role="complementary"
             aria-label="Ruki hands-free voice assistant"
@@ -370,7 +384,12 @@ export function AccessibilityLayer({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -24, scale: 0.97 }}
             transition={{ type: "spring", stiffness: 320, damping: 30 }}
-            className="pointer-events-auto flex w-full max-w-xl items-center gap-3 rounded-3xl border border-border bg-surface/90 px-3.5 py-3 shadow-2xl shadow-primary-glow backdrop-blur-xl"
+            className={`pointer-events-auto flex items-center gap-3 rounded-3xl border border-border bg-surface/90 px-3.5 py-3 shadow-2xl shadow-primary-glow backdrop-blur-xl ${
+              // Matches RightCart/LeftSidebar's own w-[340px] max-w-[88vw] exactly,
+              // so the panel's edges land flush with the open drawer's, instead of
+              // spilling onto the dimmed backdrop beside it.
+              obscuredSide ? "w-[340px] max-w-[88vw]" : "w-full max-w-xl"
+            }`}
           >
             {/* Mic — the primary control, generous tap target */}
             <button

@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Gift } from "lucide-react";
+import { AlignCenter, Gift } from "lucide-react";
 
 import { RightCart, CartItem } from "@/components/RightCart";
 import { GroupGiftModal } from "@/components/GroupGiftModal";
@@ -894,6 +894,8 @@ export default function RukiPage() {
         onSubmit={handleSendMessage}
         isBusy={isTyping || !!streamedText}
         lastResponse={lastAiText}
+        obscuredSide={rightOpen ? "right" : leftOpen ? "left" : null}
+        styles={{ AlignCenter: "bg-background/90 backdrop-blur-md", ChatBubble: "bg-surface/90 backdrop-blur-sm" }}
       />
 
       {/* Flying thumbnail animations for Gift Box Builder */}

@@ -614,6 +614,9 @@ async def create_group_gift(request: GroupGiftRequest):
 
 class TTSRequest(BaseModel):
     text: str
+    # "si" or "en" — pins the whole reply to one voice across latency chunks
+    # instead of re-detecting per chunk. See pick_voice() in infrastructure/audio/tts.py.
+    voice_lang: Optional[str] = None
 
 
 @app.post("/api/tts")
@@ -635,7 +638,7 @@ async def tts_endpoint(request: TTSRequest):
     from infrastructure.audio.tts import synthesize_speech, TTSUnavailableError
 
     try:
-        audio = await synthesize_speech(request.text)
+        audio = await synthesize_speech(request.text, request.voice_lang)
     except TTSUnavailableError as e:
         logger.warning(f"TTS synthesis unavailable: {e}")
         raise HTTPException(
