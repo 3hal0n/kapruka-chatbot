@@ -31,9 +31,21 @@ export default function RootLayout({
   const shell = (
     <html
       lang="en"
+      // The theme script below may add the "dark" class before hydration.
+      suppressHydrationWarning
       className={`${plusJakartaSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {/* Apply the saved theme before first paint so a refresh never
+            flashes light mode when the user chose dark. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html:
+              `try{if(localStorage.getItem("ruki_theme")==="dark")document.documentElement.classList.add("dark")}catch(e){}`,
+          }}
+        />
+        {children}
+      </body>
     </html>
   );
 
