@@ -363,6 +363,20 @@ export function AnimatedAIChat({
   const [inputValue, setInputValue] = React.useState("");
   const [isFocused, setIsFocused] = React.useState(false);
   const [railCollapsed, setRailCollapsed] = React.useState(false);
+
+  // Publish the desktop rail's current width so fixed-position overlays
+  // rendered outside this tree (e.g. the hands-free voice card) can center
+  // themselves over the chat area instead of the full viewport. Values must
+  // track the aside's w-19 / w-66 classes below.
+  React.useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--chat-rail-w",
+      railCollapsed ? "4.75rem" : "16.5rem"
+    );
+    return () => {
+      document.documentElement.style.removeProperty("--chat-rail-w");
+    };
+  }, [railCollapsed]);
   const [showSuggestions, setShowSuggestions] = React.useState(false);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const chatFeedEndRef = React.useRef<HTMLDivElement>(null);

@@ -371,11 +371,14 @@ export function AccessibilityLayer({
 
     <AnimatePresence>
       {open && (
-        // Centered on desktop; docked below the floating pills on mobile
-        // (pt-20 clears them). The pointer-events-none wrapper keeps the chat
-        // behind fully scrollable/clickable outside the card itself.
+        // Centered over the CHAT AREA on desktop — the left edge is pushed
+        // past the persistent sidebar rail (width published by AnimatedAIChat
+        // as --chat-rail-w; the rail is hidden below md). Docked below the
+        // floating pills on mobile (pt-20 clears them). The pointer-events-none
+        // wrapper keeps the chat behind fully scrollable/clickable outside the
+        // card itself.
         <div
-          className={`pointer-events-none fixed inset-0 z-60 flex items-start px-4 pt-20 md:items-center md:pt-4 ${
+          className={`pointer-events-none fixed inset-0 z-60 flex items-start px-4 pt-20 md:left-(--chat-rail-w,0px) md:items-center md:pt-4 ${
             obscuredSide === "right" ? "justify-end" : obscuredSide === "left" ? "justify-start" : "justify-center"
           }`}
         >
