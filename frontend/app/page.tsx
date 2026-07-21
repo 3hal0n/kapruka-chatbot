@@ -86,12 +86,26 @@ export default function RukiPage() {
     accessibilityOpenRef.current = accessibilityOpen;
   }, [accessibilityOpen]);
 
-  // ── Theme — pristine Light Mode by default, switches to Dark
+  // ── Theme — Light Mode by default, persisted across refreshes. The saved
+  // choice is applied pre-paint by the inline script in layout.tsx; this state
+  // re-syncs to it after mount (SSR renders "light", so reading localStorage
+  // in the initializer would cause a hydration mismatch).
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  useEffect(() => {
+    const stored = localStorage.getItem("ruki_theme");
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time localStorage hydration on mount; SSR has no localStorage
+    if (stored === "dark" || stored === "light") setTheme(stored);
+  }, []);
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
   }, [theme]);
-  const toggleTheme = () => setTheme(p => p === "light" ? "dark" : "light");
+  const toggleTheme = () => {
+    const next = theme === "light" ? "dark" : "light";
+    try {
+      localStorage.setItem("ruki_theme", next);
+    } catch { /* storage unavailable */ }
+    setTheme(next);
+  };
 
   // ── Session ID — guest id survives sign-out so anonymous chats resume cleanly.
   // Computed once via useState's lazy initializer (not a ref write during
@@ -894,6 +908,7 @@ export default function RukiPage() {
         onSubmit={handleSendMessage}
         isBusy={isTyping || !!streamedText}
         lastResponse={lastAiText}
+        obscuredSide={rightOpen ? "right" : leftOpen ? "left" : null}
       />
 
       {/* Flying thumbnail animations for Gift Box Builder */}

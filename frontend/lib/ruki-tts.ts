@@ -136,11 +136,29 @@ function splitForLatency(text: string): string[] {
   return tail ? [head, tail] : [head];
 }
 
-async function fetchTTSUrl(text: string): Promise<string> {
+// Mirrors backend/infrastructure/audio/tts.py's pick_voice() detection.
+// Kept in sync manually — this only needs to agree closely enough with the
+// backend to pick the SAME voice the backend would have auto-detected for
+// the full reply, not to be a perfect reimplementation.
+const SINHALA_SCRIPT = /[඀-෿]/;
+const ROMANIZED_SINHALA =
+  /\b(?:mata|oyata|apita|mage|oyage|ekak|ekata|eka|oni|onee|aiyo|aney|machan|puluwan|puluwanda|hadiyak|thohfe|thiyenawa|thiyenawada|ganna|gannawa|karanna|denna|hoyanna|balanna|hoda|hodai|lassana|supiri|amma|thaththa|akka|malli|nangi|ayya|kade|gedara|salli|mokada|kohomada|wage|witharai|ehenam|habai|eth|nathnam|walata|walatada|kiyala|kiyanne|innawa|inne|yanna|enna|badu|genna)\b/i;
+
+/**
+ * Decide the reply's voice ONCE, on the full text, before it gets split into
+ * latency chunks. Detecting per-chunk (the previous behaviour) let a Sinhala
+ * opening interjection get the si-LK voice while an English remainder got
+ * the en-GB voice, swapping voices audibly mid-reply.
+ */
+function detectVoiceLang(text: string): "si" | "en" {
+  return SINHALA_SCRIPT.test(text) || ROMANIZED_SINHALA.test(text) ? "si" : "en";
+}
+
+async function fetchTTSUrl(text: string, voiceLang: "si" | "en"): Promise<string> {
   const res = await fetch(`/api/tts`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, voice_lang: voiceLang }),
   });
   if (!res.ok) throw new Error(`TTS backend ${res.status}`);
   const blob = await res.blob();
@@ -198,9 +216,11 @@ export async function speakText(
 
   // ── Primary: backend Google Cloud TTS (language-aware female voice) ──
   // Both chunks are requested CONCURRENTLY; chunk 1 starts playing as soon as
-  // it lands while chunk 2 finishes synthesizing in the background.
+  // it lands while chunk 2 finishes synthesizing in the background. Voice is
+  // decided once on the whole reply so both chunks share one voice.
+  const voiceLang = detectVoiceLang(clean);
   const chunks = splitForLatency(clean);
-  const pending = chunks.map(c => fetchTTSUrl(c));
+  const pending = chunks.map(c => fetchTTSUrl(c, voiceLang));
   let started = false;
 
   try {

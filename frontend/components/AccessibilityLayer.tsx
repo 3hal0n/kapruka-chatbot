@@ -4,8 +4,9 @@
  * AccessibilityLayer.tsx — hands-free Voice Assistant as an ambient overlay.
  *
  * NOT a full-screen takeover: the regular chat log, product carousels, and
- * cart stay fully visible and interactive. This renders as a slim floating
- * panel docked just above the chat input with the waveform + mic status.
+ * cart stay fully visible and interactive. This renders as a floating card —
+ * centered on desktop, docked below the floating pills on mobile — built
+ * around a voice-reactive WebGL orb with the mic control at its centre.
  *
  * Everything routes through the normal chat pipeline: spoken input is
  * submitted exactly like a typed message (so the transcript lands in chat
@@ -22,6 +23,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Mic, MicOff, X, Volume2 } from "lucide-react";
+import { VoicePoweredOrb } from "@/components/ui/voice-powered-orb";
 import { speakText, stopSpeech } from "@/lib/ruki-tts";
 
 interface AccessibilityLayerProps {
@@ -33,6 +35,15 @@ interface AccessibilityLayerProps {
   isBusy: boolean;
   /** Latest assistant reply; spoken aloud whenever it changes while open. */
   lastResponse: string;
+  /**
+   * Set when the cart or left sidebar drawer is open. Those drawers only
+   * cover part of the screen (see RightCart/LeftSidebar's w-[340px]
+   * max-w-[88vw]), leaving a dimmed backdrop sliver on the other side. A
+   * panel centered on the full viewport would straddle both, half sitting on
+   * the dim backdrop — so instead it docks to the same side/width as the
+   * open drawer.
+   */
+  obscuredSide?: "left" | "right" | null;
 }
 
 type VoicePhase = "idle" | "listening" | "thinking" | "speaking";
@@ -100,6 +111,7 @@ export function AccessibilityLayer({
   onSubmit,
   isBusy,
   lastResponse,
+  obscuredSide = null,
 }: AccessibilityLayerProps) {
   const [phase, setPhase] = useState<VoicePhase>("idle");
   const [transcript, setTranscript] = useState("");
@@ -359,61 +371,85 @@ export function AccessibilityLayer({
 
     <AnimatePresence>
       {open && (
-        // Ambient top banner: new replies + carousels arrive at the BOTTOM of
-        // the chat, so docking up here never covers what Ruki is reading out.
-        // (top-20 on mobile clears the floating menu/cart pills; top-4 on md+.)
-        <div className="pointer-events-none fixed inset-x-0 top-20 z-60 flex justify-center px-4 md:top-4">
+        // Centered over the CHAT AREA on desktop — the left edge is pushed
+        // past the persistent sidebar rail (width published by AnimatedAIChat
+        // as --chat-rail-w; the rail is hidden below md). Docked below the
+        // floating pills on mobile (pt-20 clears them). The pointer-events-none
+        // wrapper keeps the chat behind fully scrollable/clickable outside the
+        // card itself.
+        <div
+          className={`pointer-events-none fixed inset-0 z-60 flex items-start px-4 pt-20 md:left-(--chat-rail-w,0px) md:items-center md:pt-4 ${
+            obscuredSide === "right" ? "justify-end" : obscuredSide === "left" ? "justify-start" : "justify-center"
+          }`}
+        >
           <motion.section
             role="complementary"
             aria-label="Ruki hands-free voice assistant"
-            initial={{ opacity: 0, y: -24, scale: 0.97 }}
+            initial={{ opacity: 0, y: 24, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -24, scale: 0.97 }}
+            exit={{ opacity: 0, y: 24, scale: 0.95 }}
             transition={{ type: "spring", stiffness: 320, damping: 30 }}
-            className="pointer-events-auto flex w-full max-w-xl items-center gap-3 rounded-3xl border border-border bg-surface/90 px-3.5 py-3 shadow-2xl shadow-primary-glow backdrop-blur-xl"
+            className={`pointer-events-auto flex flex-col items-center gap-3 rounded-3xl border border-border bg-surface/90 p-5 shadow-2xl shadow-primary-glow backdrop-blur-xl ${
+              // Matches RightCart/LeftSidebar's own w-85 max-w-[88vw] exactly,
+              // so the card's edges land flush with the open drawer's, instead
+              // of spilling onto the dimmed backdrop beside it.
+              obscuredSide ? "w-85 max-w-[88vw]" : "w-full max-w-sm"
+            }`}
           >
-            {/* Mic — the primary control, generous tap target */}
-            <button
-              onClick={toggleVoiceMode}
-              disabled={!supported || isBusy}
-              aria-label={
-                phase === "listening"
-                  ? "Stop listening voice control"
-                  : "Activate voice navigation engine"
-              }
-              className={`grid h-14 w-14 min-h-14 min-w-14 shrink-0 place-items-center rounded-full text-white shadow-lg transition-all focus-visible:outline-3 focus-visible:outline-ring disabled:opacity-40 cursor-pointer ${
-                phase === "listening"
-                  ? "animate-pulse bg-red-600 hover:bg-red-500"
-                  : "bg-linear-to-r from-primary-vivid to-primary-vivid-soft hover:brightness-110"
-              }`}
-            >
-              <Mic className="h-6 w-6" aria-hidden="true" />
-            </button>
+            {/* Header — title + exit */}
+            <div className="flex w-full items-center justify-between">
+              <p className="text-sm font-black tracking-tight text-foreground">
+                Ruki Hands-Free
+              </p>
+              <button
+                onClick={onClose}
+                aria-label="Exit voice assistant mode"
+                className="grid h-10 w-10 min-h-10 min-w-10 shrink-0 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-3 focus-visible:outline-ring cursor-pointer"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            </div>
 
-            {/* Status + live transcript */}
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2.5">
-                <FrequencyBars
-                  active={phase === "listening" || phase === "speaking"}
-                  color={phase === "speaking" ? "bg-amber" : "bg-primary-vivid"}
-                />
+            {/* Voice-reactive orb with the mic control at its centre */}
+            <div className="relative h-44 w-44 md:h-56 md:w-56">
+              <VoicePoweredOrb enableVoiceControl={phase === "listening"} />
+              <button
+                onClick={toggleVoiceMode}
+                disabled={!supported || isBusy}
+                aria-label={
+                  phase === "listening"
+                    ? "Stop listening voice control"
+                    : "Activate voice navigation engine"
+                }
+                className={`absolute left-1/2 top-1/2 grid h-14 w-14 min-h-14 min-w-14 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full text-white shadow-lg transition-all focus-visible:outline-3 focus-visible:outline-ring disabled:opacity-40 cursor-pointer ${
+                  phase === "listening"
+                    ? "animate-pulse bg-red-600 hover:bg-red-500"
+                    : "bg-linear-to-r from-primary-vivid to-primary-vivid-soft hover:brightness-110"
+                }`}
+              >
+                <Mic className="h-6 w-6" aria-hidden="true" />
+              </button>
+            </div>
+
+            {/* Status + speech-output bars + live transcript */}
+            <div className="flex w-full flex-col items-center gap-1 text-center">
+              <div className="flex items-center gap-2">
                 <p
                   aria-live="polite"
                   className={`truncate text-sm font-extrabold ${phaseColor[phase]}`}
                 >
-                  {supported
-                    ? phaseLabel[phase]
-                    : "Voice needs Chrome or Edge"}
+                  {supported ? phaseLabel[phase] : "Voice needs Chrome or Edge"}
                 </p>
                 {phase === "speaking" && (
                   <Volume2 className="h-4 w-4 shrink-0 text-amber" aria-hidden="true" />
                 )}
               </div>
-              <p className="mt-0.5 truncate text-[11px] font-medium text-muted-foreground">
+              <FrequencyBars active={phase === "speaking"} color="bg-amber" />
+              <p className="w-full truncate text-[11px] font-medium text-muted-foreground">
                 {transcript ? (
                   <span className="font-mono">“{transcript}”</span>
                 ) : (
-                  "Hands-free mode — replies read aloud, chat stays live below"
+                  "Replies read aloud — chat stays live behind"
                 )}
               </p>
             </div>
@@ -431,7 +467,7 @@ export function AccessibilityLayer({
                   onClick={() => switchVoiceLang(code)}
                   aria-pressed={voiceLang === code}
                   aria-label={code === "en-US" ? "Listen in English" : "Listen in Sinhala"}
-                  className={`px-2.5 py-1.5 text-[11px] font-black transition-colors cursor-pointer ${
+                  className={`px-3 py-1.5 text-[11px] font-black transition-colors cursor-pointer ${
                     voiceLang === code
                       ? "bg-primary-vivid text-primary-foreground"
                       : "bg-transparent text-muted-foreground hover:text-foreground"
@@ -441,15 +477,6 @@ export function AccessibilityLayer({
                 </button>
               ))}
             </div>
-
-            {/* Exit voice mode */}
-            <button
-              onClick={onClose}
-              aria-label="Exit voice assistant mode"
-              className="grid h-11 w-11 min-h-11 min-w-11 shrink-0 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-3 focus-visible:outline-ring cursor-pointer"
-            >
-              <X className="h-5 w-5" aria-hidden="true" />
-            </button>
           </motion.section>
         </div>
       )}

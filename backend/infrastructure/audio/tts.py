@@ -84,12 +84,22 @@ _ROMANIZED_SINHALA = re.compile(
 )
 
 
-def pick_voice(text: str) -> tuple[str, str]:
+def pick_voice(text: str, forced_lang: Optional[str] = None) -> tuple[str, str]:
     """Return (language_code, voice_name) for the given text.
 
-    Sinhala script OR any romanised-Sinhala token → the si-LK female voice;
-    otherwise the fluent English female voice.
+    `forced_lang` ("si" or "en") skips auto-detection. The frontend sends
+    this, decided once on the FULL reply before it's split into latency
+    chunks — without it, each chunk was detected independently, so a Sinhala
+    opening interjection could get the si-LK voice while an English
+    remainder got the en-GB voice, swapping voices audibly mid-reply.
+
+    Falls back to auto-detection (Sinhala script OR any romanised-Sinhala
+    token → si-LK; otherwise English) when forced_lang is absent or invalid.
     """
+    if forced_lang == "si":
+        return TTS_LANGUAGE_SI, TTS_VOICE_SI
+    if forced_lang == "en":
+        return TTS_LANGUAGE_EN, TTS_VOICE_EN
     if _SINHALA_SCRIPT.search(text) or _ROMANIZED_SINHALA.search(text):
         return TTS_LANGUAGE_SI, TTS_VOICE_SI
     return TTS_LANGUAGE_EN, TTS_VOICE_EN
@@ -251,16 +261,17 @@ async def _synthesize_once(
     return base64.b64decode(audio_b64)
 
 
-async def synthesize_speech(text: str) -> bytes:
+async def synthesize_speech(text: str, voice_lang: Optional[str] = None) -> bytes:
     """Synthesize `text` into MP3 bytes with the right female Ruki voice.
 
     Language-aware: Sinhala/Tanglish text uses the si-LK female profile
     (correct Sinhala rendering); pure-English text uses a fluent English
-    female Neural2 profile so English never gets the si-LK accent. Caches
-    identical phrases, and retries once WITHOUT the explicit voice name if
-    the named profile is rejected (regional voice rollouts vary) — the
-    languageCode + FEMALE gender pair then lets Google pick the closest
-    available female voice.
+    female Neural2 profile so English never gets the si-LK accent. Pass
+    `voice_lang` ("si"/"en") to pin the voice instead of auto-detecting from
+    `text` alone — see pick_voice(). Caches identical phrases, and retries
+    once WITHOUT the explicit voice name if the named profile is rejected
+    (regional voice rollouts vary) — the languageCode + FEMALE gender pair
+    then lets Google pick the closest available female voice.
 
     Raises TTSUnavailableError on any failure.
     """
@@ -268,7 +279,7 @@ async def synthesize_speech(text: str) -> bytes:
     if not clean:
         raise TTSUnavailableError("Nothing speakable in the supplied text.")
 
-    language_code, voice_name = pick_voice(clean)
+    language_code, voice_name = pick_voice(clean, voice_lang)
 
     key = _cache_key(clean, language_code, voice_name)
     cached = _audio_cache.get(key)
