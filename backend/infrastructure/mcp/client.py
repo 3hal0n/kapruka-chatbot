@@ -8,14 +8,38 @@ import time
 import asyncio
 import logging
 import httpx
+import anyio
 from typing import Dict, Any, Optional, List
 from contextlib import AsyncExitStack, asynccontextmanager
 
 from mcp import ClientSession
+from mcp.shared.exceptions import McpError
 from mcp.shared.message import SessionMessage
 import mcp.types as types
 
 logger = logging.getLogger("kapruka-mcp-client")
+
+# Exceptions that indicate the SSE session itself is stale, dropped, or was
+# never brought up — as opposed to an application-level error from the tool
+# call succeeding but returning bad data. Any of these should trigger a
+# reconnect + single retry rather than bubbling straight up to the caller.
+#   - McpError / anyio stream errors: the JSON-RPC session or its underlying
+#     read/write streams broke mid-call.
+#   - httpx.HTTPError: the transport under the SSE stream (connect/read
+#     timeouts, connection reset, bad status) failed.
+#   - RuntimeError: raised synchronously by `_execute_mcp_tool` when the
+#     client/session was never initialized or was torn down — this is the
+#     "fails instantaneously" case (no network round trip, just a guard).
+RECOVERABLE_MCP_EXCEPTIONS = (
+    McpError,
+    anyio.ClosedResourceError,
+    anyio.BrokenResourceError,
+    anyio.EndOfStream,
+    httpx.HTTPError,
+    ConnectionError,
+    TimeoutError,
+    RuntimeError,
+)
 
 
 class RateLimitedAsyncClient(httpx.AsyncClient):
@@ -62,7 +86,6 @@ class RateLimitedAsyncClient(httpx.AsyncClient):
         return response
 
 
-import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from typing import AsyncGenerator, Tuple
 
@@ -230,21 +253,88 @@ class KaprukaMCPClient:
 
 class KaprukaMCPClientManager:
     """
-    Singleton Manager that holds the active client across FastAPI request life cycles.
+    Singleton Manager that holds the active client across FastAPI request life
+    cycles, and knows how to recover it when the underlying SSE session goes
+    stale or drops.
+
+    Reconnects are serialized behind a single `asyncio.Lock`. Every concurrent
+    request task that hits a broken session awaits the same lock instead of
+    each redialing the MCP server — but none of them block the event loop
+    while waiting (`asyncio.Lock.acquire` only suspends the waiting
+    coroutine, so unrelated requests keep being served). A generation counter
+    bumped on every successful reconnect lets a waiter that queued up behind
+    an in-progress reconnect detect, once it gets the lock, that the session
+    was already refreshed after its own failure was observed — so it skips a
+    redundant reconnect and just retries against the client that's already
+    there. This is the standard idiom for "thread safety" in single-threaded
+    asyncio code: correctness comes from cooperative scheduling + the lock's
+    ordering guarantee, not OS-level mutual exclusion.
     """
+
+    # Ping the session before use if it's been idle longer than this — catches
+    # an SSE stream the remote end silently dropped before a real tool call
+    # would surface a confusing error.
+    IDLE_HEALTHCHECK_SECONDS = 60.0
+
     def __init__(self, sse_url: str = "https://mcp.kapruka.com/mcp"):
         self.sse_url = sse_url
         self.client: Optional[KaprukaMCPClient] = None
+        self._reconnect_lock = asyncio.Lock()
+        self._last_active = 0.0
+        self.generation = 0
+
+    def mark_active(self):
+        """Record successful use of the session — resets the idle clock."""
+        self._last_active = time.time()
 
     async def start(self):
         if self.client is None:
             self.client = KaprukaMCPClient(self.sse_url)
             await self.client.__aenter__()
+            self.mark_active()
 
     async def stop(self):
         if self.client is not None:
             await self.client.__aexit__(None, None, None)
             self.client = None
+
+    async def reconnect(self, known_generation: Optional[int] = None):
+        """
+        Tear down and re-establish the MCP session.
+
+        `known_generation` is the generation the caller observed a failure
+        against. If another task already reconnected (bumping the generation)
+        while this caller was waiting on the lock, the fresh session isn't
+        this caller's fault to fix again — skip straight through so it can
+        retry its tool call against what's already there.
+        """
+        async with self._reconnect_lock:
+            if known_generation is not None and known_generation != self.generation:
+                logger.debug("MCP session already reconnected by another task; skipping.")
+                return
+            logger.warning("Reconnecting Kapruka MCP session...")
+            await self.stop()
+            await self.start()
+            self.generation += 1
+            logger.info("Kapruka MCP session reconnected.")
+
+    async def ensure_healthy(self):
+        """
+        Lightweight ping when the session has been idle past the health-check
+        threshold. A failed ping is treated exactly like a failed tool call —
+        it triggers the same generation-guarded reconnect.
+        """
+        if self.client is None or self.client.mcp_session is None:
+            return  # nothing to ping yet — start()/reconnect() owns this case
+        if time.time() - self._last_active < self.IDLE_HEALTHCHECK_SECONDS:
+            return
+        gen = self.generation
+        try:
+            await self.client.mcp_session.send_ping()
+            self.mark_active()
+        except RECOVERABLE_MCP_EXCEPTIONS as e:
+            logger.warning(f"MCP idle health-check ping failed ({e}); reconnecting session.")
+            await self.reconnect(known_generation=gen)
 
 
 # Global singleton instance
@@ -326,6 +416,51 @@ async def _execute_mcp_tool(tool_name: str, arguments: dict) -> Any:
         return {"result": text_data}
 
 
+async def _execute_mcp_tool_resilient(tool_name: str, args: dict) -> Any:
+    """
+    Resilient entry point for every MCP tool invocation.
+
+    - Pings an idle session before use (`ensure_healthy`).
+    - Runs the call through the existing rate-limit backoff.
+    - If the session itself is stale/dropped — a transport, connection, or
+      protocol exception, or the instantaneous RuntimeError from a session
+      that was never initialized — logs a warning, reconnects, and retries
+      the call exactly once.
+    - If that retry also fails, gives up and returns an empty dict rather
+      than propagating the error, so callers (typed wrappers below, and in
+      turn the agents) can treat "no result" uniformly instead of handling
+      MCP-specific exceptions themselves.
+    """
+    await kapruka_mcp.ensure_healthy()
+
+    gen = kapruka_mcp.generation
+    try:
+        result = await with_rate_limit_backoff(_execute_mcp_tool, tool_name, args)
+        kapruka_mcp.mark_active()
+        return result
+    except RECOVERABLE_MCP_EXCEPTIONS as e:
+        logger.warning(
+            f"MCP tool '{tool_name}' hit a transport/connection/protocol error "
+            f"({type(e).__name__}: {e}) — reconnecting session and retrying once."
+        )
+        try:
+            await kapruka_mcp.reconnect(known_generation=gen)
+        except Exception as reconnect_err:
+            logger.error(f"MCP session reconnect failed: {reconnect_err}")
+            return {}
+
+        try:
+            result = await with_rate_limit_backoff(_execute_mcp_tool, tool_name, args)
+            kapruka_mcp.mark_active()
+            return result
+        except RECOVERABLE_MCP_EXCEPTIONS as retry_err:
+            logger.error(
+                f"MCP tool '{tool_name}' failed again after reconnect "
+                f"({type(retry_err).__name__}: {retry_err}); falling back to empty result."
+            )
+            return {}
+
+
 # TTL-aware in-memory cache for MCP tool calls (aligned with Kapruka's 30-min cache policy)
 _CACHE_TTL_SECONDS = 1800  # 30 minutes
 
@@ -374,7 +509,7 @@ async def kapruka_search_products(query: str, limit: Optional[int] = None) -> di
     if limit is not None:
         params["limit"] = limit
     args = {"params": params}
-    res = await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_search_products", args)
+    res = await _execute_mcp_tool_resilient("kapruka_search_products", args)
     if isinstance(res, dict) and "results" in res:
         # Map fields for catalog_agent compatibility
         mapped_products = []
@@ -406,7 +541,11 @@ async def kapruka_search_products(query: str, limit: Optional[int] = None) -> di
         final_res = {"products": mapped_products, "result": mapped_products}
         PRODUCT_SEARCH_CACHE[cache_key] = final_res
         return final_res
-    PRODUCT_SEARCH_CACHE[cache_key] = res
+    # An empty dict here means the resilient wrapper gave up after a
+    # reconnect + retry — a transient failure, not "no results". Don't cache
+    # it, or a dropped session would poison this query for 30 minutes.
+    if res:
+        PRODUCT_SEARCH_CACHE[cache_key] = res
     return res
 
 
@@ -418,8 +557,11 @@ async def kapruka_get_product(product_id: str) -> dict:
 
     params = {"product_id": product_id, "response_format": "json"}
     args = {"params": params}
-    res = await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_get_product", args)
-    if isinstance(res, dict):
+    res = await _execute_mcp_tool_resilient("kapruka_get_product", args)
+    # An empty dict means the resilient wrapper fell back after a failed
+    # reconnect + retry — leave it untouched rather than fabricating a fake
+    # "Out of Stock" product record, and don't cache the failure.
+    if res:
         cat_val = res.get("category")
         if isinstance(cat_val, dict):
             cat_name = cat_val.get("name") or ""
@@ -430,14 +572,14 @@ async def kapruka_get_product(product_id: str) -> dict:
         res["stock"] = "In Stock" if res.get("in_stock") else "Out of Stock"
         res["category"] = cat_name
         res["checkout_ready"] = res.get("in_stock", True)
-    PRODUCT_GET_CACHE[product_id] = res
+        PRODUCT_GET_CACHE[product_id] = res
     return res
 
 
 async def kapruka_list_categories() -> dict:
     """List all categories in Kapruka catalog."""
     args = {"params": {"depth": 2, "response_format": "json"}}
-    return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_list_categories", args)
+    return await _execute_mcp_tool_resilient("kapruka_list_categories", args)
 
 
 async def kapruka_list_delivery_cities(query: Optional[str] = None) -> dict:
@@ -446,7 +588,7 @@ async def kapruka_list_delivery_cities(query: Optional[str] = None) -> dict:
     if query:
         params["query"] = query
     args = {"params": params}
-    res = await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_list_delivery_cities", args)
+    res = await _execute_mcp_tool_resilient("kapruka_list_delivery_cities", args)
     if isinstance(res, dict) and "cities" in res:
         # Convert list of dicts to list of strings for logistics_agent compatibility
         city_names = [c.get("name") for c in res["cities"] if c.get("name")]
@@ -462,8 +604,11 @@ async def kapruka_check_delivery(city: str) -> dict:
         return DELIVERY_CHECK_CACHE[city_clean]
 
     args = {"params": {"city": city, "response_format": "json"}}
-    res = await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_check_delivery", args)
-    DELIVERY_CHECK_CACHE[city_clean] = res
+    res = await _execute_mcp_tool_resilient("kapruka_check_delivery", args)
+    # Don't cache an empty-dict failure fallback — that would mark a city as
+    # having "no delivery data" for 15 minutes after a transient drop.
+    if res:
+        DELIVERY_CHECK_CACHE[city_clean] = res
     return res
 
 
@@ -531,10 +676,10 @@ async def kapruka_create_order(
         params["gift_message"] = gift_message.strip()
     
     args = {"params": params}
-    return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_create_order", args)
+    return await _execute_mcp_tool_resilient("kapruka_create_order", args)
 
 
 async def kapruka_track_order(order_id: str) -> dict:
     """Track real-time shipment status of a Kapruka order."""
     args = {"params": {"order_number": order_id, "response_format": "json"}}
-    return await with_rate_limit_backoff(_execute_mcp_tool, "kapruka_track_order", args)
+    return await _execute_mcp_tool_resilient("kapruka_track_order", args)
