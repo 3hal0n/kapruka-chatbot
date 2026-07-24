@@ -51,6 +51,21 @@ class Router:
         # Composed gift-card message riding along with the cart payload state.
         self.pending_gift_message: str | None = None
 
+    def snapshot(self) -> dict:
+        """Serializable snapshot of the three per-session mutable fields.
+        Called after each completed turn to persist to Postgres."""
+        return {
+            "history": self.st_memory.history,
+            "last_products": self.last_products,
+            "pending_gift_message": self.pending_gift_message,
+        }
+
+    def restore(self, data: dict) -> None:
+        """Hydrate from a DB-loaded snapshot on a cold instance / cache miss."""
+        self.st_memory.history = list(data.get("history") or [])
+        self.last_products = list(data.get("last_products") or [])
+        self.pending_gift_message = data.get("pending_gift_message")
+
     def _detect_cart_action(self, user_message: str) -> dict | None:
         """
         Pre-LLM regex interceptor for unambiguous cart/purchase commands.

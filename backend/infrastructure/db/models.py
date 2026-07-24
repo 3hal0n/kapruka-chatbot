@@ -118,3 +118,37 @@ class UserCart(Base):
             "items": list(self.items or []),
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+class ChatSession(Base):
+    """Persisted counterpart of Router's in-memory session state.
+
+    One row per user_id (guest id or Clerk id), upserted after every
+    completed /api/chat turn and cleared on /api/reset. Lets a cold Cloud Run
+    instance — or a sibling instance that never saw this user — rehydrate
+    Router state instead of restarting the conversation from scratch.
+    """
+
+    __tablename__ = "chat_sessions"
+
+    user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    # ShortTermMemory.history verbatim: list[{role, content, timestamp}].
+    history: Mapped[list] = mapped_column(JsonDoc, nullable=False, default=list)
+    # Router.last_products verbatim: the last product carousel shown.
+    last_products: Mapped[list] = mapped_column(JsonDoc, nullable=False, default=list)
+    pending_gift_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "user_id": self.user_id,
+            "history": list(self.history or []),
+            "last_products": list(self.last_products or []),
+            "pending_gift_message": self.pending_gift_message,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }

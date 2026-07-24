@@ -1,5 +1,22 @@
-# Single-VM stack for Ruki: PostgreSQL + FastAPI backend + Next.js frontend.
+# Single-VM stack for Ruki: PostgreSQL + FastAPI backend + Next.js frontend,
+# fronted by a Tailscale Funnel sidecar as the ONLY ingress path.
 # Build contexts are relative to this file (deploy/), hence ../backend, ../frontend.
+#
+# ── Network posture ──────────────────────────────────────────────────────────
+# No service publishes a host port. Every container talks to its peers over the
+# internal compose network by service name (db, backend, frontend). The only
+# process reaching the public internet is the tailscale sidecar, and it does so
+# with an OUTBOUND-only connection to Tailscale's coordination servers (Funnel
+# terminates TLS and reverse-proxies in from Tailscale's edge, same shape as a
+# Cloudflare Tunnel) — so the GCP VM can (and should) deny ALL inbound traffic
+# at the firewall. See the lockdown steps in the README/instructions.
+#
+# Public traffic flow:
+#   Internet → Tailscale Funnel edge → tailscale container → http://backend:8080
+# Chosen over Cloudflare Tunnel because Cloudflare's Zero Trust product (which
+# Tunnels now live under) requires a card on file even on its $0/month plan;
+# Tailscale's free tier has not required one. A parked `cloudflared` service is
+# kept below (behind the "cloudflare" profile) in case that tradeoff changes.
 #
 # Before deploying:
 #   1. AI credentials — pick ONE:
@@ -12,6 +29,8 @@
 #   3. BACKEND_ORIGIN is the frontend's server-side rewrite target for /api/*.
 #      Within this compose network it's the "backend" service name — the
 #      client never sees it (no more NEXT_PUBLIC_API_URL baked into the bundle).
+#   4. TS_AUTHKEY — a reusable, ephemeral Tailscale auth key. Put it in
+#      deploy/.env (which is gitignored); never commit it. See instructions.
 
 services:
   db:
@@ -24,8 +43,9 @@ services:
       POSTGRES_DB: ruki_memory
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # No host port: Postgres is reachable only as "db:5432" on the internal
+    # network. For manual admin, use an SSH tunnel or `docker exec`, never a
+    # public 5432. (Exposing a database to the internet is a top breach vector.)
     # Gate dependents on real readiness so the backend never races a cold DB.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ruki_admin -d ruki_memory"]
@@ -50,8 +70,10 @@ services:
       CLERK_JWKS_URL: ${CLERK_JWKS_URL:-}
       CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-}
       DATABASE_URL: postgresql://ruki_admin:secure_db_password_2026@db:5432/ruki_memory
-    ports:
-      - "8080:8080"
+    # No host port: the backend is reached only as "backend:8080" — by the
+    # frontend proxy and by the tailscale sidecar. This is the service Funnel fronts.
+    expose:
+      - "8080"
     depends_on:
       db:
         condition: service_healthy
@@ -71,10 +93,66 @@ services:
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
       # Server-side Clerk key used by proxy.ts (session hydration).
       CLERK_SECRET_KEY: ${CLERK_SECRET_KEY:-}
-    ports:
-      - "3000:3000"
+    # No host port: reached only as "frontend:3000" over the internal network.
+    # (The web UI itself is served by Vercel, not this container — Ruki only
+    # funnels the backend API. If that changes, front this the same way: a
+    # second `tailscale funnel --bg 3000` target, or a second sidecar/hostname.)
+    expose:
+      - "3000"
+    depends_on:
+      - backend
+
+  # ── Tailscale Funnel — the sole ingress into this stack ─────────────────────
+  # Sidecar that joins your tailnet and reverse-proxies public HTTPS traffic to
+  # http://backend:8080 over the compose network. Outbound-only to Tailscale's
+  # coordination servers; no inbound port needed on the VM.
+  #
+  # One-time setup after `docker compose up -d tailscale`:
+  #   docker exec ruki_tailscale tailscale funnel --bg 8080
+  # (Run `docker exec ruki_tailscale tailscale funnel --help` first if this
+  # errors — Funnel/Serve flags have changed across Tailscale versions; adjust
+  # to match what's installed. The goal: publicly serve http://backend:8080
+  # at this node's https://<node>.<tailnet>.ts.net address.)
+  # That "funnel on" choice is stored in TS_STATE_DIR, so it survives restarts
+  # — no need to re-run it after the first time.
+  tailscale:
+    profiles: ["tailscale"]
+    image: tailscale/tailscale:latest
+    container_name: ruki_tailscale
+    hostname: ruki-backend
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?TS_AUTHKEY is required — set it in deploy/.env}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "false"
+      TS_EXTRA_ARGS: --accept-dns=false
+    volumes:
+      - ts_state:/var/lib/tailscale
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      - backend
+
+  # ── Cloudflare Tunnel (OPTIONAL — parked, not currently in use) ─────────────
+  # Cloudflare's Zero Trust free tier requires a card on file even at $0/month,
+  # which this project is avoiding. This service is behind the "cloudflare"
+  # profile so it's excluded from a plain `docker compose up` — it only starts
+  # via `docker compose --profile cloudflare up -d`. Revisit if a card-free
+  # tunnel provider is swapped in (see deploy/README notes) or the card
+  # tradeoff becomes acceptable later.
+  cloudflared:
+    profiles: ["cloudflare"]
+    image: cloudflare/cloudflared:latest
+    container_name: ruki_cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?TUNNEL_TOKEN is required — set it in deploy/.env}
     depends_on:
       - backend
 
 volumes:
   pgdata:
+  ts_state:

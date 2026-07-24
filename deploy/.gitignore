@@ -1,0 +1,5 @@
+# Never commit real secrets. .env holds the Cloudflare TUNNEL_TOKEN, DB and
+# auth credentials — it stays local to the VM. Commit .env.example instead.
+.env
+.env.*
+!.env.example

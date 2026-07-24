@@ -2,14 +2,15 @@ import os
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
+import hmac
 import json
 import logging
 import asyncio
 import time
 from typing import Dict, Any, Optional
-from fastapi import FastAPI, HTTPException, status, Depends
+from fastapi import FastAPI, HTTPException, status, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse, Response, JSONResponse
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
@@ -53,15 +54,37 @@ def parse_budget_limit(msg: str) -> Optional[float]:
     return None
 
 
-def get_router(user_id: str) -> Router:
-    """Retrieve or initialize the Router instance for a given user_id."""
+async def get_router(user_id: str) -> Router:
+    """Retrieve or initialize the Router instance for a given user_id.
+
+    L1 cache: router_sessions (this process's memory) — avoids a DB round
+    trip when this instance is already warm for this user. L2 fallback:
+    Postgres, on a cache miss (cold instance, or this user's first message
+    on this particular instance under multi-instance autoscaling) —
+    best-effort, never raises.
+    """
     clean_id = user_id.strip()
     if not clean_id:
         clean_id = "guest"
-    if clean_id not in router_sessions:
-        logger.info(f"Creating new Router session for user_id: {clean_id}")
-        router_sessions[clean_id] = Router(customer_id=clean_id)
-    return router_sessions[clean_id]
+    if clean_id in router_sessions:
+        return router_sessions[clean_id]
+
+    logger.info(f"Creating new Router session for user_id: {clean_id}")
+    router = Router(customer_id=clean_id)
+
+    try:
+        from infrastructure.db.database import DB_AVAILABLE
+        if DB_AVAILABLE:
+            from infrastructure.db.session_repo import load_session
+            saved = await load_session(clean_id)
+            if saved is not None:
+                router.restore(saved.to_dict())
+                logger.info(f"Restored session state for '{clean_id}' from DB")
+    except Exception as e:
+        logger.warning(f"Session hydration skipped for '{clean_id}': {e}")
+
+    router_sessions[clean_id] = router
+    return router
 
 
 @asynccontextmanager
@@ -132,6 +155,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Shared-secret gate: on a public Cloud Run URL (--allow-unauthenticated),
+# this is what actually stops randoms from calling the API directly — the
+# frontend's proxy.ts attaches the same secret on every /api/* rewrite.
+# No-ops entirely when INTERNAL_API_KEY is unset (local dev / docker-compose
+# on the VM), same "optional, degrades gracefully" pattern as CLERK_ISSUER.
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "")
+
+
+@app.middleware("http")
+async def require_internal_api_key(request: Request, call_next):
+    if not INTERNAL_API_KEY or request.url.path == "/health":
+        return await call_next(request)
+    provided = request.headers.get("x-internal-api-key", "")
+    if not hmac.compare_digest(provided, INTERNAL_API_KEY):
+        return JSONResponse(status_code=403, content={"detail": "Forbidden"})
+    return await call_next(request)
+
 
 # Multi-agent orchestrator gateway: /api/agent/chat, /api/vision/search, /api/me/*
 app.include_router(orchestrator_router)
@@ -231,7 +272,7 @@ async def chat_endpoint(request: ChatRequest, identity: Identity = Depends(optio
         )
 
     effective_user_id = identity.user_id if identity.is_authenticated else request.user_id
-    router = get_router(effective_user_id)
+    router = await get_router(effective_user_id)
 
     # ── User Profile JSONB update hook ────────────────────────────────────────
     # Fire-and-forget: the Persistent Context Profile Agent compares this turn
@@ -370,6 +411,20 @@ async def chat_endpoint(request: ChatRequest, identity: Identity = Depends(optio
         except Exception as e:
             logger.exception(f"Error in sse_generator: {e}")
             yield f"event: error\ndata: {json.dumps({'message': 'Internal generator error'})}\n\n"
+        finally:
+            # Persist even on a mid-turn crash (partial state beats losing the
+            # whole turn on the next cold instance). Awaited inline rather than
+            # fire-and-forget: Cloud Run throttles CPU outside an active
+            # request unless --no-cpu-throttling is set, so a detached
+            # asyncio.create_task() scheduled right before the response closes
+            # has no guarantee of completing.
+            try:
+                from infrastructure.db.database import DB_AVAILABLE
+                if DB_AVAILABLE:
+                    from infrastructure.db.session_repo import save_session
+                    await save_session(effective_user_id.strip() or "guest", **router.snapshot())
+            except Exception as e:
+                logger.warning(f"Session persistence skipped: {e}")
 
     return StreamingResponse(sse_generator(), media_type="text/event-stream")
 
@@ -377,7 +432,8 @@ async def chat_endpoint(request: ChatRequest, identity: Identity = Depends(optio
 @app.post("/api/reset")
 async def reset_endpoint(request: ResetRequest):
     """
-    Clears short-term memory (history) for the specified user_id.
+    Clears short-term memory, last-shown products, and any pending gift
+    message for the specified user_id — in the L1 cache and in Postgres.
     """
     clean_id = request.user_id.strip()
     if not clean_id:
@@ -390,12 +446,23 @@ async def reset_endpoint(request: ResetRequest):
         router = router_sessions[clean_id]
         if hasattr(router, "st_memory"):
             router.st_memory.reset_history()
-            logger.info(f"Successfully cleared conversation history for user: {clean_id}")
-            return {"status": "success", "message": f"Session memory cleared for user '{clean_id}'."}
-        else:
-            return {"status": "error", "message": "Short-term memory sub-system not available."}
-    else:
-        return {"status": "success", "message": f"No active session found for user '{clean_id}' to reset."}
+            router.last_products = []
+            router.pending_gift_message = None
+            logger.info(f"Cleared in-memory session for user: {clean_id}")
+
+    # Always attempt the DB clear too, even on an L1 miss — under multi-
+    # instance autoscaling, "not in this instance's cache" no longer means
+    # "no session exists anywhere" (it may be cached on a sibling instance,
+    # or only exist in Postgres).
+    try:
+        from infrastructure.db.database import DB_AVAILABLE
+        if DB_AVAILABLE:
+            from infrastructure.db.session_repo import clear_session
+            await clear_session(clean_id)
+    except Exception as e:
+        logger.warning(f"DB session clear skipped for '{clean_id}': {e}")
+
+    return {"status": "success", "message": f"Session memory cleared for user '{clean_id}'."}
 
 
 @app.post("/api/profiles", response_model=GiftProfileOut, status_code=status.HTTP_201_CREATED)
